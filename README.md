@@ -1,4 +1,4 @@
-# SecondBrain (2Brain) Desktop
+# Zettelkasten Desktop
 
 Dein **Second Brain** auf dem Desktop — lokal-first, KI-gestuetzt, Git-versioniert.
 Wirft rohe Notizen, PDFs, DOCX oder HTML-Dokumente hinein und laesst Claude daraus ein strukturiertes, verlinktes Markdown-Wiki bauen. Deine Daten bleiben auf deiner Festplatte, jede Aenderung ist ein Git-Commit.
