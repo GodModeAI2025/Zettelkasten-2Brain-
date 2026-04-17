@@ -60,6 +60,15 @@ Renderer (React)  <--IPC-->  Main (Node.js)  <--Git-->  Remote Repo
 **Renderer:** React-UI mit Zustand State Management, kein direkter Node.js-Zugriff.
 **Preload:** Typisierte Bridge zwischen Main und Renderer (`window.api`).
 
+## Zwei `index.html` — nicht verwechseln
+
+Das Repo enthaelt bewusst zwei HTML-Einstiegspunkte mit unterschiedlichem Zweck:
+
+- **`./index.html`** — Vite-Entry fuer den Electron-Renderer. Laedt `src/renderer/main.tsx` und wird **nur** von der Desktop-App zur Laufzeit benoetigt. Nicht manuell oeffnen.
+- **`./website/index.html`** — Standalone Landingpage (Englisch, ohne Build-Step). Dient der Projekt-Praesentation und kann z.B. als GitHub-Pages-Quelle genutzt werden.
+
+Wer beim Klonen direkt `index.html` im Browser oeffnet, sieht nur den Lade-Placeholder der App. Die eigentliche UI laeuft ueber `npm run dev` in Electron.
+
 ## Lizenz
 
 Apache License 2.0 — siehe [LICENSE](LICENSE).

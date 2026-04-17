@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0f2c" />
+  <meta name="description" content="SecondBrain (2Brain) — an AI-powered, local-first knowledge management desktop app. Turn raw notes, PDFs, and documents into a linked Markdown wiki using Claude." />
+  <meta property="og:title" content="SecondBrain (2Brain) — Your AI-Powered Second Brain" />
+  <meta property="og:description" content="Local-first knowledge management. Upload any document, let Claude structure it into a linked wiki. Your data stays on your disk." />
+  <meta property="og:type" content="website" />
+  <title>SecondBrain (2Brain) — Your AI-Powered Second Brain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0f2c;
+      --bg-2: #131a44;
+      --surface: rgba(255, 255, 255, 0.04);
+      --surface-hi: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.1);
+      --text: #f5f6ff;
+      --text-dim: #9aa1c7;
+      --text-muted: #6a7199;
+      --accent: #5b6cff;
+      --accent-2: #8a55ff;
+      --highlight: #ff9b42;
+      --success: #3ddc84;
+      --radius: 14px;
+      --max: 1160px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      scroll-behavior: smooth;
+    }
+    body {
+      background:
+        radial-gradient(1200px 600px at 15% -10%, rgba(91, 108, 255, 0.25), transparent 60%),
+        radial-gradient(900px 500px at 90% 10%, rgba(138, 85, 255, 0.18), transparent 60%),
+        radial-gradient(800px 400px at 50% 100%, rgba(255, 155, 66, 0.08), transparent 60%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    code, pre { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--highlight); }
+    .container { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+    /* ── Navigation ───────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(10, 15, 44, 0.7);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 17px;
+      color: var(--text);
+    }
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 14px;
+      color: white;
+      box-shadow: 0 6px 20px rgba(91, 108, 255, 0.45);
+    }
+    .nav-links { display: flex; gap: 28px; align-items: center; }
+    .nav-links a {
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      padding: 8px 16px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text) !important;
+      font-weight: 600;
+    }
+    .nav-cta:hover { background: var(--surface-hi); }
+    @media (max-width: 720px) {
+      .nav-links a:not(.nav-cta) { display: none; }
+    }
+
+    /* ── Hero ─────────────────────────────────── */
+    .hero {
+      padding: 100px 0 80px;
+      text-align: center;
+      position: relative;
+    }
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      margin-bottom: 28px;
+    }
+    .eyebrow .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--success);
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+      box-shadow: 0 0 10px var(--success);
+    }
+    .hero h1 {
+      font-size: clamp(40px, 7vw, 76px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      margin: 0 0 24px;
+      background: linear-gradient(180deg, #ffffff 0%, #c5c9e8 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .hero h1 .grad {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 50%, var(--highlight) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .hero p.lead {
+      font-size: clamp(17px, 2vw, 20px);
+      color: var(--text-dim);
+      max-width: 680px;
+      margin: 0 auto 36px;
+      line-height: 1.6;
+    }
+    .hero-ctas {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 24px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 15px;
+      transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: white !important;
+      box-shadow: 0 8px 24px rgba(91, 108, 255, 0.45);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 32px rgba(91, 108, 255, 0.6);
+    }
+    .btn-secondary {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text) !important;
+    }
+    .btn-secondary:hover { background: var(--surface-hi); border-color: rgba(255,255,255,0.2); }
+    .hero-meta {
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .hero-meta span::before {
+      content: "✓ ";
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    /* ── Product visual ───────────────────────── */
+    .hero-visual {
+      margin: 72px auto 0;
+      max-width: 960px;
+      aspect-ratio: 16/10;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #1a2254, #0e1438);
+      border: 1px solid var(--border);
+      box-shadow: 0 40px 100px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(91, 108, 255, 0.15);
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+    }
+    .mock-sidebar {
+      background: rgba(0, 0, 0, 0.25);
+      border-right: 1px solid var(--border);
+      padding: 20px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .mock-sidebar .item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mock-sidebar .item.active {
+      background: var(--surface-hi);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .mock-sidebar .item::before {
+      content: "●";
+      font-size: 8px;
+      color: var(--accent);
+    }
+    .mock-content {
+      padding: 28px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .mock-h { font-size: 20px; font-weight: 700; color: var(--text); }
+    .mock-p { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+    .mock-link { color: var(--accent); }
+    .mock-graph {
+      margin-top: 12px;
+      flex: 1;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      position: relative;
+      min-height: 140px;
+    }
+    .mock-node {
+      position: absolute;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+    }
+    .mock-node.n2 { background: var(--accent-2); box-shadow: 0 0 12px var(--accent-2); }
+    .mock-node.n3 { background: var(--highlight); box-shadow: 0 0 12px var(--highlight); }
+    .mock-line {
+      position: absolute;
+      height: 1px;
+      background: linear-gradient(90deg, var(--border), transparent);
+      transform-origin: left center;
+    }
+    @media (max-width: 640px) {
+      .mock-sidebar { display: none; }
+      .hero-visual { grid-template-columns: 1fr; }
+    }
+
+    /* ── Section ──────────────────────────────── */
+    section { padding: 100px 0; }
+    .section-head {
+      text-align: center;
+      max-width: 680px;
+      margin: 0 auto 64px;
+    }
+    .section-eyebrow {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: rgba(91, 108, 255, 0.12);
+      border: 1px solid rgba(91, 108, 255, 0.25);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    .section-head h2 {
+      font-size: clamp(30px, 4.5vw, 44px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 16px;
+      color: var(--text);
+    }
+    .section-head p {
+      font-size: 17px;
+      color: var(--text-dim);
+      margin: 0;
+    }
+
+    /* ── Feature grid ─────────────────────────── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .feature {
+      padding: 28px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      transition: transform 0.2s, border-color 0.2s, background 0.2s;
+    }
+    .feature:hover {
+      transform: translateY(-4px);
+      background: var(--surface-hi);
+      border-color: rgba(91, 108, 255, 0.3);
+    }
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: grid;
+      place-items: center;
+      margin-bottom: 20px;
+      font-size: 22px;
+    }
+    .feature h3 {
+      font-size: 17px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: var(--text);
+    }
+    .feature p {
+      font-size: 14px;
+      color: var(--text-dim);
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* ── How it works ─────────────────────────── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+    }
+    .step {
+      padding: 32px 28px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      position: relative;
+    }
+    .step-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--highlight);
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: 0.1em;
+    }
+    .step h3 {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 10px;
+    }
+    .step p { color: var(--text-dim); margin: 0; font-size: 14.5px; }
+
+    /* ── Split section ────────────────────────── */
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+    }
+    @media (max-width: 860px) {
+      .split { grid-template-columns: 1fr; gap: 40px; }
+    }
+    .split h2 {
+      font-size: clamp(28px, 3.8vw, 38px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 20px;
+      line-height: 1.15;
+    }
+    .split p {
+      color: var(--text-dim);
+      font-size: 16px;
+      margin: 0 0 14px;
+    }
+    .split-list { list-style: none; padding: 0; margin: 24px 0 0; }
+    .split-list li {
+      padding: 10px 0;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      font-size: 15px;
+      color: var(--text-dim);
+    }
+    .split-list li::before {
+      content: "→";
+      color: var(--highlight);
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .split-list li strong { color: var(--text); }
+    .split-visual {
+      border-radius: 16px;
+      background: linear-gradient(135deg, #161c46, #0d1335);
+      border: 1px solid var(--border);
+      padding: 32px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+    .code-block {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.8;
+      font-family: 'JetBrains Mono', monospace;
+      overflow-x: auto;
+    }
+    .code-block .k { color: #ff9b42; }
+    .code-block .s { color: #3ddc84; }
+    .code-block .c { color: var(--text-muted); }
+
+    /* ── Stack ─────────────────────────────────── */
+    .stack-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+    .stack-item {
+      padding: 20px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+    .stack-item .label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+    .stack-item .name { font-size: 15px; font-weight: 600; color: var(--text); }
+
+    /* ── CTA banner ────────────────────────────── */
+    .cta-banner {
+      border-radius: 24px;
+      padding: 64px 40px;
+      background: linear-gradient(135deg, rgba(91, 108, 255, 0.2), rgba(138, 85, 255, 0.15));
+      border: 1px solid rgba(91, 108, 255, 0.3);
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .cta-banner::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(600px 300px at 50% 0%, rgba(255, 155, 66, 0.15), transparent 60%);
+      pointer-events: none;
+    }
+    .cta-banner h2 {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 800;
+      margin: 0 0 16px;
+      letter-spacing: -0.02em;
+      position: relative;
+    }
+    .cta-banner p {
+      font-size: 17px;
+      color: var(--text-dim);
+      margin: 0 0 28px;
+      position: relative;
+    }
+    .cta-banner .hero-ctas { position: relative; }
+
+    /* ── Footer ────────────────────────────────── */
+    footer {
+      padding: 60px 0 40px;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    .footer-links { display: flex; gap: 28px; flex-wrap: wrap; }
+    .footer-links a { color: var(--text-muted); }
+    .footer-links a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="container nav-inner">
+    <div class="brand">
+      <div class="brand-logo">2B</div>
+      <span>SecondBrain</span>
+    </div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#stack">Stack</a>
+      <a href="#privacy">Privacy</a>
+      <a class="nav-cta" href="https://github.com/GodModeAI2025/SecondBrain-2Brain-">GitHub →</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="eyebrow"><span class="dot"></span>Open Source · Apache 2.0 · Local-first</div>
+    <h1>Your <span class="grad">Second Brain</span>,<br/>powered by Claude.</h1>
+    <p class="lead">
+      Drop in any document — PDF, DOCX, HTML, plain text — and watch it turn into a structured, linked Markdown wiki.
+      A desktop app that thinks with you, stores everything on your disk, and versions every change with Git.
+    </p>
+    <div class="hero-ctas">
+      <a class="btn btn-primary" href="https://github.com/GodModeAI2025/SecondBrain-2Brain-">
+        Clone on GitHub
+        <span>→</span>
+      </a>
+      <a class="btn btn-secondary" href="#how">See how it works</a>
+    </div>
+    <div class="hero-meta">
+      <span>Runs on macOS, Linux &amp; Windows</span>
+      <span>No telemetry</span>
+      <span>Your data never leaves your machine</span>
+    </div>
+
+    <div class="hero-visual" aria-hidden="true">
+      <div class="mock-sidebar">
+        <div class="item">Dashboard</div>
+        <div class="item">Raw Inputs</div>
+        <div class="item active">Wiki</div>
+        <div class="item">Graph</div>
+        <div class="item">Query</div>
+        <div class="item">Ingest</div>
+        <div class="item">Lint</div>
+        <div class="item">Output</div>
+        <div class="item">Brand</div>
+      </div>
+      <div class="mock-content">
+        <div class="mock-h">Circular Economy</div>
+        <div class="mock-p">
+          A regenerative system where <span class="mock-link">resource input</span> and waste,
+          emissions, and energy leakage are minimised by slowing, closing, and narrowing
+          <span class="mock-link">material loops</span>.
+        </div>
+        <div class="mock-graph">
+          <div class="mock-node" style="top:20%; left:15%;"></div>
+          <div class="mock-node n2" style="top:55%; left:32%;"></div>
+          <div class="mock-node n3" style="top:30%; left:60%;"></div>
+          <div class="mock-node" style="top:70%; left:75%;"></div>
+          <div class="mock-node n2" style="top:15%; left:82%;"></div>
+          <div class="mock-line" style="top:22%; left:16%; width:45%; transform:rotate(8deg);"></div>
+          <div class="mock-line" style="top:56%; left:33%; width:42%; transform:rotate(18deg);"></div>
+          <div class="mock-line" style="top:31%; left:61%; width:22%; transform:rotate(-28deg);"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-eyebrow">Features</span>
+      <h2>Everything you need to think in public, privately.</h2>
+      <p>A complete knowledge workflow — from raw dump to structured wiki to AI-powered reasoning — in one desktop app.</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">📥</div>
+        <h3>Drag &amp; drop ingestion</h3>
+        <p>PDFs, DOCX, HTML, TXT, CSV, JSON — all converted to Markdown on upload. Duplicate detection built in.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🧠</div>
+        <h3>AI-powered structuring</h3>
+        <p>Claude reads each new source and proposes entities, concepts, and syntheses as wiki pages with wikilinks.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">💬</div>
+        <h3>Takeaway discussions</h3>
+        <p>Every extracted insight gets a sparring chat. Talk it out, then optionally save as a synthesis page.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🕸️</div>
+        <h3>Knowledge graph</h3>
+        <p>Interactive force-directed visualization of every page and every wikilink. See your thinking take shape.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔍</div>
+        <h3>Ask your wiki</h3>
+        <p>BM25-ranked retrieval with a persistent index, Claude streaming, and full source citations on every answer.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🩺</div>
+        <h3>Health check &amp; lint</h3>
+        <p>Mechanical repair plus AI-generated questions, gap analysis, and synthesis candidates to keep your wiki alive.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📄</div>
+        <h3>Output generation</h3>
+        <p>Custom syntheses from your wiki. Marp presentations render directly in the app as live slide decks.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🎨</div>
+        <h3>Brand foundation</h3>
+        <p>Define voice, style, and positioning once — injected into every AI call so all output sounds like you.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⚙️</div>
+        <h3>Built-in skills</h3>
+        <p>Curated prompt modules (like <code>marp-presentation</code>) installable in one click. Extend with your own.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔄</div>
+        <h3>Git-native sync</h3>
+        <p>Every upload, ingest, and output is committed automatically. Push, pull, and collaborate like with code.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📁</div>
+        <h3>Multi-project</h3>
+        <p>Keep work, research, and personal knowledge in separate vaults — all under one roof, one repo.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔐</div>
+        <h3>Encrypted secrets</h3>
+        <p>API keys and Git tokens stored via the OS keychain (Electron safeStorage). Never in plaintext.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-eyebrow">Workflow</span>
+      <h2>From raw dump to reasoned wiki in three steps.</h2>
+      <p>No prompt engineering. No folder structure decisions. Just drop, review, build.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">STEP 01</div>
+        <h3>Drop in anything</h3>
+        <p>Drag a PDF, paste a URL, upload a folder of DOCX files. The converter handles format, the deduper handles duplicates.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 02</div>
+        <h3>Let Claude ingest</h3>
+        <p>The AI reads each source, extracts takeaways, and proposes wiki operations: create, update, or merge pages with proper wikilinks.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">STEP 03</div>
+        <h3>Query, refine, output</h3>
+        <p>Ask questions with full source citations. Run the linter to spot gaps. Generate presentations, essays, or reports from your knowledge.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="container">
+    <div class="split">
+      <div>
+        <span class="section-eyebrow">Privacy</span>
+        <h2>Your data stays where it belongs — on your disk.</h2>
+        <p>
+          SecondBrain is local-first by design. Every page, every raw input, every generated output lives in a plain
+          Markdown folder you control. The only network calls go to the Claude API, only when you trigger them.
+        </p>
+        <ul class="split-list">
+          <li><strong>No cloud storage.</strong> Your vault is a regular folder. Back it up, sync it with Git, or zip it up.</li>
+          <li><strong>No telemetry.</strong> Zero usage tracking, zero analytics, zero phone-home.</li>
+          <li><strong>Encrypted secrets.</strong> API keys and Git tokens go through the OS keychain via Electron <code>safeStorage</code>.</li>
+          <li><strong>Auditable.</strong> Every change is a Git commit. You can see exactly what the AI did, and roll it back.</li>
+        </ul>
+      </div>
+      <div class="split-visual">
+        <div class="code-block">
+<span class="c"># Your vault structure</span>
+~/Library/Application Support/
+  Zettelkasten/repos/
+  └── MyVault/
+      ├── <span class="k">brand/</span>
+      │   ├── voice.md
+      │   ├── style.md
+      │   └── positioning.md
+      ├── <span class="k">raw/</span>              <span class="c"># original uploads</span>
+      ├── <span class="k">wiki/</span>             <span class="c"># linked markdown</span>
+      │   ├── concepts/
+      │   ├── entities/
+      │   └── synth/
+      ├── <span class="k">output/</span>           <span class="c"># generated docs</span>
+      └── <span class="k">.git/</span>             <span class="c"># full history</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="container">
+    <div class="section-head">
+      <span class="section-eyebrow">Under the hood</span>
+      <h2>Built on a stack you can trust and extend.</h2>
+      <p>Open source, typed end-to-end, and structured so every contribution is straightforward.</p>
+    </div>
+    <div class="stack-grid">
+      <div class="stack-item"><div class="label">Desktop</div><div class="name">Electron 41</div></div>
+      <div class="stack-item"><div class="label">Frontend</div><div class="name">React 19</div></div>
+      <div class="stack-item"><div class="label">State</div><div class="name">Zustand</div></div>
+      <div class="stack-item"><div class="label">AI</div><div class="name">Anthropic SDK</div></div>
+      <div class="stack-item"><div class="label">Git</div><div class="name">isomorphic-git</div></div>
+      <div class="stack-item"><div class="label">Bundler</div><div class="name">Vite</div></div>
+      <div class="stack-item"><div class="label">Language</div><div class="name">TypeScript</div></div>
+      <div class="stack-item"><div class="label">Graph</div><div class="name">react-force-graph</div></div>
+      <div class="stack-item"><div class="label">Testing</div><div class="name">Vitest</div></div>
+      <div class="stack-item"><div class="label">Markdown</div><div class="name">markdown-it</div></div>
+      <div class="stack-item"><div class="label">Ranking</div><div class="name">BM25</div></div>
+      <div class="stack-item"><div class="label">License</div><div class="name">Apache 2.0</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="cta-banner">
+      <h2>Start building your second brain today.</h2>
+      <p>Clone the repo, add your Claude API key, drop in your first document. Under five minutes to a running wiki.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="https://github.com/GodModeAI2025/SecondBrain-2Brain-">
+          Get the source
+          <span>→</span>
+        </a>
+        <a class="btn btn-secondary" href="https://github.com/GodModeAI2025/SecondBrain-2Brain-/blob/main/README.md">Read the docs</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container footer-inner">
+    <div>© 2026 Mark Zimmermann · SecondBrain (2Brain)</div>
+    <div class="footer-links">
+      <a href="https://github.com/GodModeAI2025/SecondBrain-2Brain-">GitHub</a>
+      <a href="https://github.com/GodModeAI2025/SecondBrain-2Brain-/blob/main/LICENSE">Apache 2.0</a>
+      <a href="https://github.com/GodModeAI2025/SecondBrain-2Brain-/tree/main/docs/adr">ADRs</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
