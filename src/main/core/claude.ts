@@ -18,11 +18,30 @@ export function resetClient(): void {
   client = null;
 }
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+}
+
 export interface AskResult {
   text: string;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: TokenUsage;
   truncated: boolean;
+  model: string;
+  costUsd?: number;
 }
+
+export interface RetryInfo {
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  status?: number;
+  reason: string;
+}
+
+export type RetryCallback = (info: RetryInfo) => void;
 
 // Prefix-Match erlaubt Versions-Suffixe (z.B. claude-opus-4-7-20260101).
 const MODEL_MAX_OUTPUT_TOKENS: Array<[string, number]> = [
@@ -50,6 +69,191 @@ function clampMaxTokens(requested: number | undefined, model: string | undefined
   return Math.min(requested, cap);
 }
 
+const RETRYABLE_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+const DEFAULT_MAX_ATTEMPTS = 4;
+const BASE_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 30_000;
+
+const MODEL_TOKEN_PRICES_PER_MILLION: Array<[string, { input: number; output: number; cacheWrite?: number; cacheRead?: number }]> = [
+  ['claude-opus-4', { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 }],
+  ['claude-sonnet-4', { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 }],
+  ['claude-haiku-3-5', { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 }],
+  ['claude-3-5-haiku', { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 }],
+  ['claude-haiku-3', { input: 0.25, output: 1.25, cacheWrite: 0.3, cacheRead: 0.03 }],
+];
+
+function pricingFor(model: string): { input: number; output: number; cacheWrite?: number; cacheRead?: number } | null {
+  for (const [prefix, prices] of MODEL_TOKEN_PRICES_PER_MILLION) {
+    if (model.startsWith(prefix)) return prices;
+  }
+  return null;
+}
+
+export function estimateClaudeCostUsd(model: string, usage: TokenUsage): number | undefined {
+  const prices = pricingFor(model);
+  if (!prices) return undefined;
+  const inputCost = usage.inputTokens * prices.input / 1_000_000;
+  const outputCost = usage.outputTokens * prices.output / 1_000_000;
+  const cacheWriteCost = (usage.cacheCreationInputTokens || 0) * (prices.cacheWrite ?? prices.input) / 1_000_000;
+  const cacheReadCost = (usage.cacheReadInputTokens || 0) * (prices.cacheRead ?? prices.input) / 1_000_000;
+  return inputCost + outputCost + cacheWriteCost + cacheReadCost;
+}
+
+function normalizeUsage(usage: {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+}): TokenUsage {
+  const extra = usage as {
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+  };
+  return {
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationInputTokens: extra.cache_creation_input_tokens ?? undefined,
+    cacheReadInputTokens: extra.cache_read_input_tokens ?? undefined,
+  };
+}
+
+function abortError(): Error {
+  const err = new Error('Vorgang wurde abgebrochen.');
+  err.name = 'AbortError';
+  return err;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
+function statusFromError(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const record = err as Record<string, unknown>;
+  const status = record.status ?? record.statusCode;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function headerFromError(err: unknown, name: string): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const record = err as Record<string, unknown>;
+  const headers = record.headers ?? (record.response as Record<string, unknown> | undefined)?.headers;
+  if (!headers) return null;
+  if (typeof (headers as { get?: unknown }).get === 'function') {
+    const val = (headers as { get: (key: string) => string | null }).get(name);
+    return val;
+  }
+  const obj = headers as Record<string, unknown>;
+  const direct = obj[name] ?? obj[name.toLowerCase()];
+  return typeof direct === 'string' ? direct : null;
+}
+
+function retryAfterMs(err: unknown): number | null {
+  const header = headerFromError(err, 'retry-after');
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const dateMs = Date.parse(header);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
+function errorCode(err: unknown): string | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const code = (err as Record<string, unknown>).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function retryReason(err: unknown): string {
+  const status = statusFromError(err);
+  if (status) return `HTTP ${status}`;
+  const code = errorCode(err);
+  if (code) return code;
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isRetryableError(err: unknown): boolean {
+  if (isAbortError(err)) return false;
+  const status = statusFromError(err);
+  if (status !== undefined) return RETRYABLE_STATUSES.has(status);
+  const code = errorCode(err);
+  if (code && RETRYABLE_ERROR_CODES.has(code)) return true;
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return msg.includes('timeout') || msg.includes('temporarily unavailable') || msg.includes('network');
+  }
+  return false;
+}
+
+function retryDelayMs(err: unknown, attempt: number): number {
+  const retryAfter = retryAfterMs(err);
+  if (retryAfter !== null) return Math.min(retryAfter, MAX_RETRY_DELAY_MS);
+  const exponential = Math.min(MAX_RETRY_DELAY_MS, BASE_RETRY_DELAY_MS * 2 ** (attempt - 1));
+  const jitter = 0.75 + Math.random() * 0.5;
+  return Math.round(exponential * jitter);
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(done, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(abortError());
+    };
+    function done() {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function withRetries<T>(
+  run: () => Promise<T>,
+  opts: {
+    signal?: AbortSignal;
+    maxAttempts?: number;
+    onRetry?: RetryCallback;
+  } = {},
+): Promise<T> {
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  let attempt = 1;
+  for (;;) {
+    throwIfAborted(opts.signal);
+    try {
+      return await run();
+    } catch (err) {
+      throwIfAborted(opts.signal);
+      if (attempt >= maxAttempts || !isRetryableError(err)) throw err;
+      const delayMs = retryDelayMs(err, attempt);
+      opts.onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts,
+        delayMs,
+        status: statusFromError(err),
+        reason: retryReason(err),
+      });
+      await delay(delayMs, opts.signal);
+      attempt++;
+    }
+  }
+}
+
 export interface ImageBlock {
   data: string;          // Base64-encoded
   mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
@@ -61,6 +265,9 @@ export async function ask(opts: {
   images?: ImageBlock[];
   model?: string;
   maxTokens?: number;
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  onRetry?: RetryCallback;
 }): Promise<AskResult> {
   const anthropic = getClient();
 
@@ -80,32 +287,35 @@ export async function ask(opts: {
       : opts.prompt;
 
   const model = opts.model || SettingsService.getModel();
-  const stream = anthropic.messages.stream({
+  const request = {
     model,
     max_tokens: clampMaxTokens(opts.maxTokens, model),
     system: [
       {
-        type: 'text',
+        type: 'text' as const,
         text: opts.system,
-        cache_control: { type: 'ephemeral' },
+        cache_control: { type: 'ephemeral' as const },
       },
     ],
-    messages: [{ role: 'user', content: userContent }],
-  });
+    messages: [{ role: 'user' as const, content: userContent }],
+  };
 
-  const response = await stream.finalMessage();
+  const response = await withRetries(
+    () => anthropic.messages.create(request, opts.signal ? { signal: opts.signal } : undefined),
+    { signal: opts.signal, maxAttempts: opts.maxAttempts, onRetry: opts.onRetry },
+  );
 
   const textBlock = response.content.find((b) => b.type === 'text');
   if (!textBlock || textBlock.type !== 'text') {
     throw new Error('Keine Textantwort von Claude erhalten');
   }
+  const usage = normalizeUsage(response.usage);
   return {
     text: textBlock.text,
-    usage: {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    },
+    usage,
     truncated: response.stop_reason === 'max_tokens',
+    model,
+    costUsd: estimateClaudeCostUsd(model, usage),
   };
 }
 
@@ -124,6 +334,9 @@ export async function askForJson<T>(opts: {
   model?: string;
   maxTokens?: number;
   maxRetries?: number;
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  onRetry?: RetryCallback;
 }): Promise<AskJsonResult<T>> {
   const maxRetries = opts.maxRetries ?? 1;
 
@@ -156,30 +369,57 @@ export async function* askStreaming(opts: {
   prompt: string;
   model?: string;
   maxTokens?: number;
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  onRetry?: RetryCallback;
 }): AsyncGenerator<string> {
   const anthropic = getClient();
 
   const model = opts.model || SettingsService.getModel();
-  const stream = anthropic.messages.stream({
+  const request = {
     model,
     max_tokens: clampMaxTokens(opts.maxTokens, model),
     system: [
       {
-        type: 'text',
+        type: 'text' as const,
         text: opts.system,
-        cache_control: { type: 'ephemeral' },
+        cache_control: { type: 'ephemeral' as const },
       },
     ],
-    messages: [{ role: 'user', content: opts.prompt }],
-  });
+    messages: [{ role: 'user' as const, content: opts.prompt }],
+  };
 
-  for await (const event of stream) {
-    if (
-      event.type === 'content_block_delta' &&
-      'delta' in event &&
-      event.delta.type === 'text_delta'
-    ) {
-      yield event.delta.text;
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  let attempt = 1;
+  let yielded = false;
+  for (;;) {
+    throwIfAborted(opts.signal);
+    try {
+      const stream = anthropic.messages.stream(request, opts.signal ? { signal: opts.signal } : undefined);
+      for await (const event of stream) {
+        if (
+          event.type === 'content_block_delta' &&
+          'delta' in event &&
+          event.delta.type === 'text_delta'
+        ) {
+          yielded = true;
+          yield event.delta.text;
+        }
+      }
+      return;
+    } catch (err) {
+      throwIfAborted(opts.signal);
+      if (yielded || attempt >= maxAttempts || !isRetryableError(err)) throw err;
+      const delayMs = retryDelayMs(err, attempt);
+      opts.onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts,
+        delayMs,
+        status: statusFromError(err),
+        reason: retryReason(err),
+      });
+      await delay(delayMs, opts.signal);
+      attempt++;
     }
   }
 }
@@ -211,7 +451,8 @@ function repairTruncatedJson(json: string): string {
   repaired = repaired.replace(/,\s*$/, '');
   // Offene Klammern von innen nach aussen schliessen
   while (openBrackets.length > 0) {
-    const bracket = openBrackets.pop()!;
+    const bracket = openBrackets.pop();
+    if (!bracket) break;
     const closer = bracket === '{' ? '}' : ']';
     // Vor dem Schliessen: Trailing Commas innerhalb entfernen
     repaired = repaired.replace(/,\s*$/, '');

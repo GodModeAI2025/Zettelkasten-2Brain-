@@ -6,7 +6,7 @@ import { useIngestStore, type IngestSummary } from '../stores/ingest.store';
 import { IngestProgress } from '../components/ingest/IngestProgress';
 import { TakeawayList } from '../components/ingest/TakeawayList';
 import { useWikiStore } from '../stores/wiki.store';
-import type { RawFileInfo, PendingStub } from '../../shared/api.types';
+import type { PendingStub } from '../../shared/api.types';
 
 export function IngestPage() {
   const activeProject = useProjectStore((s) => s.activeProject);
@@ -30,6 +30,7 @@ export function IngestPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [pendingStubs, setPendingStubs] = useState<PendingStub[]>([]);
+  const [cancelling, setCancelling] = useState(false);
 
   const loadFiles = useCallback(async () => {
     if (!activeProject) return;
@@ -51,6 +52,12 @@ export function IngestPage() {
   useEffect(() => {
     loadFiles();
   }, [loadFiles]);
+
+  useEffect(() => {
+    if (phase !== 'running' && phase !== 'committing') {
+      setCancelling(false);
+    }
+  }, [phase]);
 
   const toggleFile = (file: string) => {
     setSelected((prev) => {
@@ -83,6 +90,7 @@ export function IngestPage() {
     if (!activeProject) return;
     const files = selected.size > 0 ? [...selected] : undefined;
     start(files?.length || rawFiles.length);
+    setCancelling(false);
 
     try {
       const res = await api.ingest.run(activeProject, files);
@@ -93,10 +101,28 @@ export function IngestPage() {
         'error',
         `Ingest fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      setCancelling(false);
     }
   };
 
-  const running = phase === 'running' || phase === 'committing';
+  const cancelIngest = async () => {
+    if (!activeProject || cancelling) return;
+    setCancelling(true);
+    try {
+      const res = await api.ingest.cancel(activeProject);
+      if (!res.cancelled) {
+        addNotification('info', 'Kein laufender Ingest gefunden.');
+        setCancelling(false);
+      }
+    } catch (err) {
+      addNotification(
+        'error',
+        `Abbruch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      setCancelling(false);
+    }
+  };
 
   if (!activeProject) {
     return (
@@ -209,11 +235,13 @@ export function IngestPage() {
           processedFiles={processedFiles}
           summaryMessage={summaryMessage}
           startedAt={startedAt}
+          onCancel={cancelIngest}
+          cancelling={cancelling}
         />
       )}
 
       {/* Ergebnisse */}
-      {phase === 'complete' && results.length > 0 && (
+      {(phase === 'complete' || phase === 'cancelled') && results.length > 0 && (
         <>
           <TakeawayList results={results} />
           <div style={{ marginTop: 16 }}>
@@ -225,7 +253,7 @@ export function IngestPage() {
       )}
 
       {/* Abschluss ohne Ergebnisse */}
-      {phase === 'complete' && results.length === 0 && (
+      {(phase === 'complete' || phase === 'cancelled') && results.length === 0 && (
         <div style={{ marginTop: 16 }}>
           <button className="btn btn-secondary" onClick={() => { reset(); loadFiles(); }}>
             Zurück zur Dateiauswahl

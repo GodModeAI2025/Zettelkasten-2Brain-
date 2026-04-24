@@ -133,9 +133,9 @@ export function OutputPage() {
           loadOutputs();
           clearJob(selectedOutput);
         })
-        .catch(() => {});
+        .catch(() => undefined);
     }
-  }, [viewedJob?.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewedJob?.phase]);
 
   const handleViewResult = async () => {
     if (!activeProject || !selectedOutput) return;

@@ -156,7 +156,7 @@ export async function loadConfig(vaultPath: string): Promise<BrainConfig> {
       // Fallback: alte 2brain.config.json suchen und umbenennen
       try {
         raw = await readFile(oldConfigPath, 'utf-8');
-        await rename(oldConfigPath, configPath).catch(() => {});
+        await rename(oldConfigPath, configPath).catch(() => undefined);
       } catch {
         throw new Error(`Keine zettelkasten.config.json gefunden in ${vaultPath}.`);
       }

@@ -108,7 +108,7 @@ export function App() {
         }
 
         // Initial pull (nicht blockierend)
-        autoSync().catch(() => {});
+        autoSync().catch(() => undefined);
 
         await loadProjects();
         try {

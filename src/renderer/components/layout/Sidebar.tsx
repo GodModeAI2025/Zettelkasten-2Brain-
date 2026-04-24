@@ -188,7 +188,7 @@ export function Sidebar() {
       .then((pages) => setWikiPages(pages))
       .catch(() => setWikiPages([]))
       .finally(() => setWikiLoading(false));
-  }, [activeProject]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProject]);
 
   // Close dropdown on outside click
   useEffect(() => {

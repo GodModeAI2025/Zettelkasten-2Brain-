@@ -3336,11 +3336,12 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
   border-radius: var(--radius-md);
 }
 .ingest-card-complete { border-left-color: var(--tint-green); }
+.ingest-card-cancelled { border-left-color: var(--system-orange, #FF9500); }
 
 .ingest-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .ingest-header-left { display: flex; align-items: center; gap: 10px; }
 .ingest-header-left h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.ingest-header-right { display: flex; align-items: center; gap: 12px; }
+.ingest-header-right { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
 .ingest-counter {
   font-size: 14px;
@@ -3358,6 +3359,23 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
   gap: 8px;
 }
 .ingest-timer-eta { color: var(--tint-blue); }
+
+.ingest-token-total,
+.ingest-cost-total {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ingest-cost-total {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ingest-cancel-btn {
+  flex-shrink: 0;
+}
 
 .ingest-bar-track {
   height: 6px;
@@ -3403,6 +3421,19 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
   color: var(--tint-green);
 }
 
+.ingest-cancelled-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(255, 149, 0, 0.1);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--system-orange, #FF9500);
+}
+
 /* === Ingest Datei-Status-Liste === */
 .ingest-file-status-list {
   display: flex;
@@ -3414,7 +3445,7 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
 
 .ingest-file-status {
   display: grid;
-  grid-template-columns: 20px 1fr auto auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -3432,6 +3463,9 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
 .ingest-file-error {
   background: rgba(255, 59, 48, 0.06);
 }
+.ingest-file-cancelled {
+  opacity: 0.75;
+}
 
 .ingest-file-icon {
   display: flex;
@@ -3442,6 +3476,7 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
 }
 .ingest-file-done .ingest-file-icon { color: var(--tint-green); }
 .ingest-file-error .ingest-file-icon { color: var(--tint-red); }
+.ingest-file-cancelled .ingest-file-icon { color: var(--system-orange, #FF9500); }
 .ingest-file-active .ingest-file-icon { color: var(--tint-blue); }
 
 .ingest-file-name {
@@ -3465,10 +3500,24 @@ h4 { font-size: 17px; font-weight: 600; line-height: 1.41; }
   white-space: nowrap;
 }
 
+.ingest-file-cost {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .ingest-file-warning {
   grid-column: 2 / -1;
   font-size: 11px;
   color: var(--system-orange, #FF9500);
+}
+
+.ingest-file-retry {
+  grid-column: 2 / -1;
+  font-size: 11px;
+  color: var(--tint-blue);
 }
 
 .ingest-file-error-msg {

@@ -78,7 +78,7 @@ export function WikiPage() {
         addNotification('error', 'Seite konnte nicht geladen werden.');
         setLoadedPage(null);
       });
-  }, [activeProject, activePage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProject, activePage]);
 
   const handleWikilinkClick = useCallback(
     (target: string) => {

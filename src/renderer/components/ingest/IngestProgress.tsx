@@ -4,9 +4,16 @@ interface ProgressEntry {
   file: string;
   step: string;
   message: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  model?: string;
+  retryAttempt?: number;
+  retryMaxAttempts?: number;
+  retryDelayMs?: number;
 }
 
-type IngestPhase = 'idle' | 'running' | 'committing' | 'complete' | 'error';
+type IngestPhase = 'idle' | 'running' | 'committing' | 'complete' | 'cancelled' | 'error';
 
 interface IngestProgressProps {
   entries: ProgressEntry[];
@@ -15,15 +22,20 @@ interface IngestProgressProps {
   processedFiles: number;
   summaryMessage: string;
   startedAt: number | null;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }
 
 function stepIcon(step: string): string {
   switch (step) {
+    case 'pending': return '\u25CB';
     case 'analyzing': return '\u2699';
     case 'thinking': return '\u25D4';
+    case 'retrying': return '\u21BB';
     case 'converting': return '\u21BB';
     case 'writing': return '\u270F';
     case 'done': return '\u2713';
+    case 'cancelled': return '\u2212';
     case 'error': return '\u2717';
     case 'tokens': return '\u2261';
     case 'warning': return '\u26A0';
@@ -33,11 +45,14 @@ function stepIcon(step: string): string {
 
 function stepLabel(step: string): string {
   switch (step) {
+    case 'pending': return 'Wartet';
     case 'analyzing': return 'KI analysiert';
     case 'thinking': return 'KI denkt nach';
+    case 'retrying': return 'API wiederholt';
     case 'converting': return 'Konvertiere';
     case 'writing': return 'Schreibe Wiki-Seiten';
-    case 'done': return 'Fertig';
+    case 'done': return 'OK';
+    case 'cancelled': return 'Abgebrochen';
     case 'error': return 'Fehler';
     case 'tokens': return 'API-Antwort';
     case 'warning': return 'Warnung';
@@ -51,10 +66,13 @@ function stepOrder(step: string): number {
     case 'thinking':
     case 'converting':
     case 'writing':
+    case 'retrying':
     case 'tokens':
       return 0; // Aktiv → oben
-    case 'done': return 1;
-    case 'error': return 2;
+    case 'pending': return 1;
+    case 'done': return 2;
+    case 'cancelled': return 3;
+    case 'error': return 4;
     default: return 3;
   }
 }
@@ -69,8 +87,12 @@ interface FileStatus {
   file: string;
   step: string;
   message: string;
-  tokens?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  tokenMessage?: string;
   warning?: string;
+  retry?: string;
 }
 
 function buildFileStatuses(entries: ProgressEntry[]): FileStatus[] {
@@ -86,14 +108,28 @@ function buildFileStatuses(entries: ProgressEntry[]): FileStatus[] {
     const latest = fileEntries[fileEntries.length - 1];
     const tokenEntry = fileEntries.find((e) => e.step === 'tokens');
     const warningEntry = fileEntries.find((e) => e.step === 'warning');
+    const retryEntry = [...fileEntries].reverse().find((e) => e.step === 'retrying');
     return {
       file,
       step: latest.step,
       message: latest.message,
-      tokens: tokenEntry?.message,
+      inputTokens: tokenEntry?.inputTokens,
+      outputTokens: tokenEntry?.outputTokens,
+      costUsd: tokenEntry?.costUsd,
+      tokenMessage: tokenEntry?.message,
       warning: warningEntry?.message,
+      retry: retryEntry?.message,
     };
   });
+}
+
+function formatTokenCount(tokens: number): string {
+  return tokens.toLocaleString('de');
+}
+
+function formatCost(cost: number): string {
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
 }
 
 function ProgressTimer({ startedAt, processedFiles, totalFiles }: {
@@ -127,11 +163,21 @@ function ProgressTimer({ startedAt, processedFiles, totalFiles }: {
   );
 }
 
-export function IngestProgress({ entries, phase, totalFiles, processedFiles, summaryMessage, startedAt }: IngestProgressProps) {
+export function IngestProgress({
+  entries,
+  phase,
+  totalFiles,
+  processedFiles,
+  summaryMessage,
+  startedAt,
+  onCancel,
+  cancelling = false,
+}: IngestProgressProps) {
   if (phase === 'idle') return null;
 
   const percent = totalFiles > 0 ? Math.round((processedFiles / totalFiles) * 100) : 0;
   const isComplete = phase === 'complete';
+  const isCancelled = phase === 'cancelled';
   const isCommitting = phase === 'committing';
   const isActive = phase === 'running' || phase === 'committing';
 
@@ -139,19 +185,32 @@ export function IngestProgress({ entries, phase, totalFiles, processedFiles, sum
   const sorted = [...fileStatuses].sort((a, b) => stepOrder(a.step) - stepOrder(b.step));
   const doneCount = fileStatuses.filter((f) => f.step === 'done').length;
   const errorCount = fileStatuses.filter((f) => f.step === 'error').length;
+  const cancelledCount = fileStatuses.filter((f) => f.step === 'cancelled').length;
+  const totalInputTokens = fileStatuses.reduce((sum, f) => sum + (f.inputTokens || 0), 0);
+  const totalOutputTokens = fileStatuses.reduce((sum, f) => sum + (f.outputTokens || 0), 0);
+  const knownCostItems = fileStatuses.filter((f) => typeof f.costUsd === 'number');
+  const totalCost = knownCostItems.reduce((sum, f) => sum + (f.costUsd || 0), 0);
 
   return (
-    <div className={`ingest-card ${isComplete ? 'ingest-card-complete' : ''}`}>
+    <div className={`ingest-card ${isComplete ? 'ingest-card-complete' : ''}${isCancelled ? ' ingest-card-cancelled' : ''}`}>
       {/* Header */}
       <div className="ingest-header">
         <div className="ingest-header-left">
           {isActive && <span className="ingest-active-dot" />}
           <h3>
-            {isComplete ? 'Ingest abgeschlossen' : isCommitting ? 'Git-Commit...' : 'Ingest läuft...'}
+            {isComplete ? 'Ingest abgeschlossen' : isCancelled ? 'Ingest abgebrochen' : isCommitting ? 'Git-Commit...' : 'Ingest läuft...'}
           </h3>
         </div>
         <div className="ingest-header-right">
           {isActive && <ProgressTimer startedAt={startedAt} processedFiles={processedFiles} totalFiles={totalFiles} />}
+          {totalInputTokens + totalOutputTokens > 0 && (
+            <span className="ingest-token-total">
+              {formatTokenCount(totalInputTokens)} in / {formatTokenCount(totalOutputTokens)} out
+            </span>
+          )}
+          {knownCostItems.length > 0 && (
+            <span className="ingest-cost-total">~ {formatCost(totalCost)}</span>
+          )}
           {!isComplete && (
             <span className="ingest-counter">{processedFiles} / {totalFiles}</span>
           )}
@@ -159,6 +218,11 @@ export function IngestProgress({ entries, phase, totalFiles, processedFiles, sum
             <span className="ingest-counter">
               {doneCount} fertig{errorCount > 0 ? `, ${errorCount} Fehler` : ''}
             </span>
+          )}
+          {isActive && onCancel && (
+            <button className="btn btn-secondary btn-sm ingest-cancel-btn" onClick={onCancel} disabled={cancelling}>
+              {cancelling ? 'Stoppe...' : 'Abbrechen'}
+            </button>
           )}
         </div>
       </div>
@@ -187,6 +251,13 @@ export function IngestProgress({ entries, phase, totalFiles, processedFiles, sum
         </div>
       )}
 
+      {isCancelled && summaryMessage && (
+        <div className="ingest-cancelled-banner">
+          <span>{'\u2212'}</span>
+          <span>{summaryMessage}{cancelledCount > 0 ? ` (${cancelledCount} abgebrochen)` : ''}</span>
+        </div>
+      )}
+
       {/* Datei-Liste mit Status */}
       {sorted.length > 0 && (
         <div className="ingest-file-status-list">
@@ -194,11 +265,12 @@ export function IngestProgress({ entries, phase, totalFiles, processedFiles, sum
             const isFileActive = stepOrder(fs.step) === 0;
             const isError = fs.step === 'error';
             const isDone = fs.step === 'done';
+            const isCancelledFile = fs.step === 'cancelled';
 
             return (
               <div
                 key={fs.file}
-                className={`ingest-file-status${isFileActive ? ' ingest-file-active' : ''}${isDone ? ' ingest-file-done' : ''}${isError ? ' ingest-file-error' : ''}`}
+                className={`ingest-file-status${isFileActive ? ' ingest-file-active' : ''}${isDone ? ' ingest-file-done' : ''}${isError ? ' ingest-file-error' : ''}${isCancelledFile ? ' ingest-file-cancelled' : ''}`}
               >
                 <span className="ingest-file-icon">
                   {isFileActive && <span className="ingest-active-dot-sm" />}
@@ -206,7 +278,9 @@ export function IngestProgress({ entries, phase, totalFiles, processedFiles, sum
                 </span>
                 <span className="ingest-file-name">{fs.file}</span>
                 <span className="ingest-file-step">{fs.step === 'thinking' ? fs.message : stepLabel(fs.step)}</span>
-                {fs.tokens && <span className="ingest-file-tokens">{fs.tokens}</span>}
+                {typeof fs.costUsd === 'number' && <span className="ingest-file-cost">~ {formatCost(fs.costUsd)}</span>}
+                {fs.tokenMessage && <span className="ingest-file-tokens">{fs.tokenMessage}</span>}
+                {fs.retry && isFileActive && <span className="ingest-file-retry">{fs.retry}</span>}
                 {fs.warning && <span className="ingest-file-warning">{'\u26A0'} {fs.warning}</span>}
                 {isError && <div className="ingest-file-error-msg">{fs.message}</div>}
               </div>

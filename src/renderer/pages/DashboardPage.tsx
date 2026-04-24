@@ -34,6 +34,7 @@ export function DashboardPage() {
   const [showConfigEditor, setShowConfigEditor] = useState(false);
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [cancellingIngest, setCancellingIngest] = useState(false);
 
   // Editable fields as strings for easier editing
   const [domain, setDomain] = useState('');
@@ -69,6 +70,27 @@ export function DashboardPage() {
     refreshStatus();
     loadConfig();
   }, [activeProject, loadConfig]);
+
+  useEffect(() => {
+    if (ingestPhase !== 'running' && ingestPhase !== 'committing') {
+      setCancellingIngest(false);
+    }
+  }, [ingestPhase]);
+
+  const cancelIngest = async () => {
+    if (!activeProject || cancellingIngest) return;
+    setCancellingIngest(true);
+    try {
+      const res = await api.ingest.cancel(activeProject);
+      if (!res.cancelled) {
+        addNotification('info', 'Kein laufender Ingest gefunden.');
+        setCancellingIngest(false);
+      }
+    } catch (err) {
+      addNotification('error', `Abbruch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+      setCancellingIngest(false);
+    }
+  };
 
   const markDirty = () => setConfigDirty(true);
 
@@ -165,7 +187,7 @@ export function DashboardPage() {
 
   const s = activeStatus;
 
-  const showRebuildProgress = rebuilding || ingestPhase === 'complete';
+  const showRebuildProgress = rebuilding || ingestPhase !== 'idle';
 
   return (
     <div>
@@ -183,8 +205,10 @@ export function DashboardPage() {
             processedFiles={ingestProcessedFiles}
             summaryMessage={ingestSummaryMessage}
             startedAt={ingestStartedAt}
+            onCancel={cancelIngest}
+            cancelling={cancellingIngest}
           />
-          {!rebuilding && ingestPhase === 'complete' && (
+          {!rebuilding && (ingestPhase === 'complete' || ingestPhase === 'cancelled') && (
             <div style={{ marginTop: 8, textAlign: 'right' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => ingestReset()}>
                 Fortschritt ausblenden

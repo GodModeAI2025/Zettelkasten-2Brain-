@@ -38,7 +38,7 @@ export const INGEST_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis
 5. **Frontmatter**: Jede Seite hat:
    \`\`\`
    ---
-   tags: [tag1, tag2]
+   tags: [topic/beispiel, type/source]
    sources: [quelldatei.md]
    confidence: high | medium | low | uncertain
    status: seed | confirmed | stale
@@ -48,6 +48,7 @@ export const INGEST_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis
    superseded_by: [[neuere-seite]]
    ---
    \`\`\`
+   - \`tags\`: Maximal 8 Tags pro Seite. Wenn im Kontext eine geschlossene Tag-Liste steht, nutze AUSSCHLIESSLICH diese Tags. Wenn keine Liste konfiguriert ist, nutze nur Tags mit Namespace \`topic/\`, \`person/\`, \`company/\` oder \`type/\`. Keine freien Einwort-Tags, keine Synonym-Varianten, keine einmaligen Ad-hoc-Tags.
    - \`reviewed\`: Immer \`false\` bei KI-generierten Seiten. Der Mensch setzt das spaeter auf \`true\` nach Durchsicht. Du setzt \`reviewed\` NIE auf \`true\`.
    - \`confidence: uncertain\` bedeutet: du kannst die Aussage nicht eindeutig verifizieren (widerspruechliche Quellen, vage Formulierung, fehlender Kontext). Nutze das lieber als \`low\` wenn du wirklich zweifelst.
 
@@ -69,6 +70,8 @@ export const INGEST_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis
 6. **Quellen-Zusammenfassung** (wiki/sources/): Enthält Zusammenfassung, Kernaussagen, erwähnte Entitäten und Konzepte.
 
 7. **Widersprüche**: Wenn neue Informationen bestehende ERSETZEN, setze \`superseded_by: [[neue-seite]]\` auf der alten Seite und ändere deren Status auf \`stale\`. Wenn sie ergänzen, dokumentiere den Widerspruch mit beiden Quellen und Daten. Alte Seiten werden NICHT gelöscht.
+
+7a. **Drift-Compare ist Pflicht**: Der Kontext enthaelt BM25-Nachbarseiten. Pruefe jede dieser Seiten gegen die neue Quelle. Wenn die neue Quelle eine Nachbarseite ersetzt, muss die alte Seite in \`operations\` aktualisiert werden (\`status: stale\`, \`superseded_by\`) und \`summary.superseded\` muss den Pair \`old/new\` enthalten. Wenn keine Ersetzung vorliegt, ist \`summary.superseded: []\` Pflicht.
 
 8. **Temporale Integrität**:
    - \`confidence\`: Setze basierend auf Quellenlage:

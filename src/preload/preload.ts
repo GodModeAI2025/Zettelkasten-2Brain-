@@ -54,6 +54,7 @@ const api = {
   },
   ingest: {
     run: (proj: string, files?: string[]) => ipcRenderer.invoke('ingest:run', proj, files),
+    cancel: (proj: string) => ipcRenderer.invoke('ingest:cancel', proj),
   },
   query: {
     ask: (proj: string, question: string) => ipcRenderer.invoke('query:ask', proj, question),
@@ -116,7 +117,7 @@ const api = {
 
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const allowed = new Set(['ingest:progress', 'query:stream-chunk', 'query:stream-end', 'git:sync-status', 'files:upload-progress', 'lint:progress', 'output:progress', 'schedule:status']);
-    if (!allowed.has(channel)) return () => {};
+    if (!allowed.has(channel)) return () => undefined;
     const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => callback(...args);
     ipcRenderer.on(channel, listener);
     return () => { ipcRenderer.removeListener(channel, listener); };

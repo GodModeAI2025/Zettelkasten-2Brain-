@@ -511,7 +511,7 @@ export function GraphPage() {
     // Gravitation: zieht Cluster zum Zentrum, verhindert Abdriften
     fg.d3Force('center')?.strength(0.1);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const d3Force3d = require('d3-force-3d');
       if (d3Force3d.forceRadial) {
         fg.d3Force('gravity', d3Force3d.forceRadial(120).strength(0.06));

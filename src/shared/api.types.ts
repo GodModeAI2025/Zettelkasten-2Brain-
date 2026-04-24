@@ -252,6 +252,7 @@ export interface BridgeApi {
   };
   ingest: {
     run: (proj: string, files?: string[]) => Promise<unknown[]>;
+    cancel: (proj: string) => Promise<{ cancelled: boolean }>;
   };
   query: {
     ask: (proj: string, question: string) => Promise<QueryResult>;

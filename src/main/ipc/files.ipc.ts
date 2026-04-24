@@ -136,13 +136,13 @@ export function registerFilesHandlers(): void {
             result.error = `Konvertierung fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`;
             sendProgress({ filename: file.name, step: 'error', message: result.error, fileIndex: i, totalFiles });
             // Temp-Datei aufräumen
-            await rm(tmpPath, { force: true }).catch(() => {});
+            await rm(tmpPath, { force: true }).catch(() => undefined);
             results.push(result);
             continue;
           }
 
           // Temp-Datei sofort löschen — wird nicht mehr gebraucht
-          await rm(tmpPath, { force: true }).catch(() => {});
+          await rm(tmpPath, { force: true }).catch(() => undefined);
 
           if (!conversion.converted || !conversion.markdown) {
             result.error = conversion.error || 'Konvertierung ergab keinen Inhalt';
@@ -185,7 +185,7 @@ export function registerFilesHandlers(): void {
       }
 
       // Temp-Ordner aufräumen
-      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
 
       // Git Commit (nur .md Dateien im Vault)
       const successful = results.filter((r) => !r.error);
