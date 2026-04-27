@@ -61,9 +61,8 @@ function stripWikiPrefix(relativePath: string): string {
 }
 
 function pageTitle(relativePath: string): string {
-  return relativePath
-    .replace(/\.md$/i, '')
-    .split('/').pop()!
+  const fallback = relativePath.replace(/\.md$/i, '');
+  return (fallback.split('/').pop() || fallback)
     .replace(/-/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }

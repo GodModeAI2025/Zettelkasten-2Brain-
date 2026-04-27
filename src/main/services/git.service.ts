@@ -1,8 +1,20 @@
-import git from 'isomorphic-git';
+import {
+  add as gitAdd,
+  checkout as gitCheckout,
+  clone as gitClone,
+  commit as gitCommit,
+  fetch as gitFetch,
+  log as gitLog,
+  pull as gitPull,
+  push as gitPush,
+  remove as gitRemove,
+  resolveRef as gitResolveRef,
+  statusMatrix as gitStatusMatrix,
+  writeRef as gitWriteRef,
+} from 'isomorphic-git';
 import http from 'isomorphic-git/http/node';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { join, basename } from 'path';
-import { existsSync } from 'fs';
 import { getReposDir } from '../util/paths';
 import { SettingsService } from './settings.service';
 import type { GitChange, GitChangeState, GitCommitInfo } from '../../shared/api.types';
@@ -67,7 +79,7 @@ export const GitService = {
       const dir = join(getReposDir(), name);
       await fs.mkdir(dir, { recursive: true });
 
-      await git.clone({
+      await gitClone({
         fs,
         http,
         dir,
@@ -92,7 +104,7 @@ export const GitService = {
       const localChanges = await this.getLocalChangedFiles();
 
       try {
-        await git.pull({
+        await gitPull({
           fs,
           http,
           dir,
@@ -107,12 +119,12 @@ export const GitService = {
         if (msg.includes('merge') || msg.includes('conflict') || msg.includes('MERGE')) {
           console.log('[git] Konflikt erkannt — lokale Version wird beibehalten');
           // Hard-Reset auf lokalen Stand, dann Commit + Push
-          await git.checkout({ fs, dir, ref: 'HEAD', force: true });
+          await gitCheckout({ fs, dir, ref: 'HEAD', force: true });
           for (const filepath of localChanges) {
-            try { await git.add({ fs, dir, filepath }); } catch { /* skip */ }
+            try { await gitAdd({ fs, dir, filepath }); } catch { /* skip */ }
           }
           if (localChanges.length > 0) {
-            await git.commit({
+            await gitCommit({
               fs, dir,
               message: 'Lokale Aenderungen nach Konflikt (Festplatte gewinnt)',
               author: { name: '2Brain', email: '2brain@local' },
@@ -133,7 +145,7 @@ export const GitService = {
   async getLocalChangedFiles(): Promise<string[]> {
     try {
       const dir = ensureRepoDir();
-      const statusMatrix = await git.statusMatrix({ fs, dir });
+      const statusMatrix = await gitStatusMatrix({ fs, dir });
       return statusMatrix
         .filter(([, head, workdir]) => head !== workdir)
         .map(([filepath]) => filepath);
@@ -145,7 +157,7 @@ export const GitService = {
   async listChanges(): Promise<GitChange[]> {
     try {
       const dir = ensureRepoDir();
-      const statusMatrix = await git.statusMatrix({ fs, dir });
+      const statusMatrix = await gitStatusMatrix({ fs, dir });
       return statusMatrix
         .map(([filepath, head, workdir, stage]) => ({
           path: filepath,
@@ -164,7 +176,7 @@ export const GitService = {
   async listRecentCommits(limit = 12): Promise<GitCommitInfo[]> {
     try {
       const dir = ensureRepoDir();
-      const commits = await git.log({ fs, dir, depth: Math.max(1, Math.floor(limit)) });
+      const commits = await gitLog({ fs, dir, depth: Math.max(1, Math.floor(limit)) });
       return commits.map((entry) => ({
         oid: entry.oid,
         message: entry.commit.message.split('\n')[0] || '(ohne Nachricht)',
@@ -180,7 +192,7 @@ export const GitService = {
   async push(): Promise<{ success: boolean; error?: string }> {
     try {
       const dir = ensureRepoDir();
-      await git.push({
+      await gitPush({
         fs,
         http,
         dir,
@@ -195,9 +207,9 @@ export const GitService = {
   async addAndCommit(filepaths: string[], message: string): Promise<void> {
     const dir = ensureRepoDir();
     for (const filepath of filepaths) {
-      await git.add({ fs, dir, filepath });
+      await gitAdd({ fs, dir, filepath });
     }
-    await git.commit({
+    await gitCommit({
       fs,
       dir,
       message,
@@ -207,13 +219,13 @@ export const GitService = {
 
   async addAll(): Promise<void> {
     const dir = ensureRepoDir();
-    const status = await git.statusMatrix({ fs, dir });
+    const status = await gitStatusMatrix({ fs, dir });
     for (const [filepath, head, workdir, stage] of status) {
       if (workdir !== head || stage !== head) {
         if (workdir === 0) {
-          await git.remove({ fs, dir, filepath });
+          await gitRemove({ fs, dir, filepath });
         } else {
-          await git.add({ fs, dir, filepath });
+          await gitAdd({ fs, dir, filepath });
         }
       }
     }
@@ -227,14 +239,14 @@ export const GitService = {
   async addAllInScope(scope: string): Promise<void> {
     const dir = ensureRepoDir();
     const prefix = scope.endsWith('/') ? scope : `${scope}/`;
-    const status = await git.statusMatrix({ fs, dir });
+    const status = await gitStatusMatrix({ fs, dir });
     for (const [filepath, head, workdir, stage] of status) {
       if (!filepath.startsWith(prefix)) continue;
       if (workdir !== head || stage !== head) {
         if (workdir === 0) {
-          await git.remove({ fs, dir, filepath });
+          await gitRemove({ fs, dir, filepath });
         } else {
-          await git.add({ fs, dir, filepath });
+          await gitAdd({ fs, dir, filepath });
         }
       }
     }
@@ -248,7 +260,7 @@ export const GitService = {
   async listUntrackedFiles(pathRegex?: RegExp): Promise<string[]> {
     try {
       const dir = ensureRepoDir();
-      const status = await git.statusMatrix({ fs, dir });
+      const status = await gitStatusMatrix({ fs, dir });
       return status
         .filter(([fp, head, workdir, stage]) => {
           if (head !== 0 || workdir !== 2 || stage !== 0) return false;
@@ -271,7 +283,7 @@ export const GitService = {
     }
 
     // Pruefen ob es ueberhaupt etwas zu committen gibt (ggf. scoped)
-    const staged = await git.statusMatrix({ fs, dir });
+    const staged = await gitStatusMatrix({ fs, dir });
     const scopePrefix = scope ? (scope.endsWith('/') ? scope : `${scope}/`) : null;
     const hasChanges = staged.some(([fp, head, , stage]) => {
       if (head === stage) return false;
@@ -283,7 +295,7 @@ export const GitService = {
     }
 
     const appSettings = SettingsService.get();
-    await git.commit({
+    await gitCommit({
       fs,
       dir,
       message,
@@ -295,7 +307,7 @@ export const GitService = {
     console.log(`[git] Commit: ${message}`);
 
     try {
-      await git.push({ fs, http, dir, onAuth: () => getAuth() });
+      await gitPush({ fs, http, dir, onAuth: () => getAuth() });
       console.log('[git] Push erfolgreich');
     } catch (err) {
       console.error('[git] Push fehlgeschlagen (wird beim naechsten Sync nachgeholt):', err instanceof Error ? err.message : err);
@@ -305,7 +317,7 @@ export const GitService = {
   async forcePush(): Promise<{ success: boolean; error?: string }> {
     try {
       const dir = ensureRepoDir();
-      await git.push({
+      await gitPush({
         fs,
         http,
         dir,
@@ -323,7 +335,7 @@ export const GitService = {
       const dir = ensureRepoDir();
 
       // Fetch latest from remote
-      await git.fetch({
+      await gitFetch({
         fs,
         http,
         dir,
@@ -332,14 +344,14 @@ export const GitService = {
       });
 
       // Resolve the remote branch ref
-      const remoteBranch = await git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/main' })
-        .catch(() => git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/master' }));
+      const remoteBranch = await gitResolveRef({ fs, dir, ref: 'refs/remotes/origin/main' })
+        .catch(() => gitResolveRef({ fs, dir, ref: 'refs/remotes/origin/master' }));
 
       // Point local HEAD to remote
-      await git.writeRef({ fs, dir, ref: 'refs/heads/main', value: remoteBranch, force: true });
+      await gitWriteRef({ fs, dir, ref: 'refs/heads/main', value: remoteBranch, force: true });
 
       // Checkout to overwrite working directory
-      await git.checkout({ fs, dir, ref: 'main', force: true });
+      await gitCheckout({ fs, dir, ref: 'main', force: true });
 
       return { success: true };
     } catch (err) {
@@ -362,15 +374,15 @@ export const GitService = {
 
   async status(): Promise<{ clean: boolean; ahead: number; behind: number }> {
     const dir = ensureRepoDir();
-    const statusMatrix = await git.statusMatrix({ fs, dir });
+    const statusMatrix = await gitStatusMatrix({ fs, dir });
     const dirty = statusMatrix.some(([, head, workdir, stage]) =>
       head !== workdir || head !== stage
     );
 
     let ahead = 0;
     try {
-      const localRef = await git.resolveRef({ fs, dir, ref: 'HEAD' });
-      const remoteRef = await git.resolveRef({ fs, dir, ref: 'refs/remotes/origin/HEAD' }).catch(() => null);
+      const localRef = await gitResolveRef({ fs, dir, ref: 'HEAD' });
+      const remoteRef = await gitResolveRef({ fs, dir, ref: 'refs/remotes/origin/HEAD' }).catch(() => null);
       if (remoteRef && localRef !== remoteRef) ahead = 1;
     } catch {
       // Refs nicht verfuegbar

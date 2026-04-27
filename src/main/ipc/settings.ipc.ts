@@ -1,4 +1,4 @@
-import { ipcMain, nativeTheme, powerSaveBlocker, dialog, BrowserWindow } from 'electron';
+import { ipcMain, nativeTheme, powerSaveBlocker, dialog, BrowserWindow, type OpenDialogOptions } from 'electron';
 import { SettingsService, type AppSettings } from '../services/settings.service';
 import { SchedulerService } from '../services/scheduler.service';
 import { resetClient } from '../core/claude';
@@ -66,11 +66,14 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:select-directory', async () => {
     const win = BrowserWindow.getFocusedWindow();
-    const result = await dialog.showOpenDialog(win!, {
+    const options: OpenDialogOptions = {
       title: 'Arbeitsverzeichnis waehlen',
       properties: ['openDirectory', 'createDirectory'],
       defaultPath: getDataDirectory(),
-    });
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });

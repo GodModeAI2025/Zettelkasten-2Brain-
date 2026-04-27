@@ -1,4 +1,4 @@
-import Graph from 'graphology';
+import Graphology from 'graphology';
 import louvain from 'graphology-communities-louvain';
 import pagerank from 'graphology-pagerank';
 
@@ -26,7 +26,7 @@ export function analyzeGraph(input: GraphAnalysisInput): GraphAnalysisResult {
     return { communities, pagerank: ranks };
   }
 
-  const graph = new Graph({ type: 'undirected', allowSelfLoops: false });
+  const graph = new Graphology({ type: 'undirected', allowSelfLoops: false });
   for (const id of input.nodeIds) {
     graph.addNode(id);
   }
@@ -69,7 +69,7 @@ export function analyzeGraph(input: GraphAnalysisInput): GraphAnalysisResult {
   return { communities, pagerank: ranks };
 }
 
-function fillDegreeFallback(graph: Graph, nodeIds: string[], ranks: Map<string, number>): void {
+function fillDegreeFallback(graph: Graphology, nodeIds: string[], ranks: Map<string, number>): void {
   let total = 0;
   const raw = new Map<string, number>();
   for (const id of nodeIds) {

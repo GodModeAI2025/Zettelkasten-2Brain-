@@ -208,8 +208,14 @@ export const SettingsService = {
   },
 
   get(): AppSettings {
-    const { _encryptedApiKey, _encryptedGitToken, ...publicSettings } = settings;
-    return publicSettings;
+    return {
+      git: settings.git,
+      ui: settings.ui,
+      ai: settings.ai,
+      system: settings.system,
+      schedule: settings.schedule,
+      activeProjectName: settings.activeProjectName,
+    };
   },
 
   async set(patch: Partial<AppSettings>): Promise<void> {

@@ -161,7 +161,7 @@ function WikiSubNav() {
       ) : (
         <div className="wiki-subnav-tree">
           {sortedDirs.map((dir) => {
-            const dirPages = grouped.get(dir)!;
+            const dirPages = grouped.get(dir) || [];
             const isCollapsed = isDirCollapsed(dir);
 
             if (!dir) {

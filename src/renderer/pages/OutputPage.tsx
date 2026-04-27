@@ -5,7 +5,7 @@ import { useAppStore } from '../stores/app.store';
 import { useOutputStore } from '../stores/output.store';
 import { MarkdownViewer } from '../components/wiki/MarkdownViewer';
 import { MarpViewer, isMarpContent } from '../components/output/MarpViewer';
-import type { OutputInfo, OutputPrompt, SkillInfo } from '../../shared/api.types';
+import type { OutputInfo, SkillInfo } from '../../shared/api.types';
 
 type ViewMode = 'list' | 'edit' | 'result' | 'skill-edit';
 
@@ -23,7 +23,6 @@ export function OutputPage() {
   const startJob = useOutputStore((s) => s.startJob);
   const clearJob = useOutputStore((s) => s.clearJob);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [prompt, setPrompt] = useState<OutputPrompt | null>(null);
   const [editBody, setEditBody] = useState('');
   const [editSources, setEditSources] = useState('wiki/**/*.md');
   const [editFormat, setEditFormat] = useState('markdown');
@@ -71,14 +70,12 @@ export function OutputPage() {
     setViewMode('edit');
     try {
       const p = await api.output.readPrompt(activeProject, name);
-      setPrompt(p);
       setEditBody(p.body);
       setEditSources(p.sources);
       setEditFormat(p.format);
       setEditModel(p.model);
       setEditSkills(p.skills || []);
     } catch {
-      setPrompt(null);
       setEditBody('');
       setEditSkills([]);
     }

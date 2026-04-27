@@ -1,5 +1,5 @@
 declare module 'graphology-pagerank' {
-  import type Graph from 'graphology';
+  import type Graphology from 'graphology';
 
   interface PagerankOptions {
     alpha?: number;
@@ -8,6 +8,6 @@ declare module 'graphology-pagerank' {
     getEdgeWeight?: string | null;
   }
 
-  function pagerank(graph: Graph, options?: PagerankOptions): Record<string, number>;
+  function pagerank(graph: Graphology, options?: PagerankOptions): Record<string, number>;
   export default pagerank;
 }
