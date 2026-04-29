@@ -223,37 +223,6 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function withRetries<T>(
-  run: () => Promise<T>,
-  opts: {
-    signal?: AbortSignal;
-    maxAttempts?: number;
-    onRetry?: RetryCallback;
-  } = {},
-): Promise<T> {
-  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-  let attempt = 1;
-  for (;;) {
-    throwIfAborted(opts.signal);
-    try {
-      return await run();
-    } catch (err) {
-      throwIfAborted(opts.signal);
-      if (attempt >= maxAttempts || !isRetryableError(err)) throw err;
-      const delayMs = retryDelayMs(err, attempt);
-      opts.onRetry?.({
-        attempt: attempt + 1,
-        maxAttempts,
-        delayMs,
-        status: statusFromError(err),
-        reason: retryReason(err),
-      });
-      await delay(delayMs, opts.signal);
-      attempt++;
-    }
-  }
-}
-
 export interface ImageBlock {
   data: string;          // Base64-encoded
   mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
@@ -300,23 +269,40 @@ export async function ask(opts: {
     messages: [{ role: 'user' as const, content: userContent }],
   };
 
-  const response = await withRetries(
-    () => anthropic.messages.create(request, opts.signal ? { signal: opts.signal } : undefined),
-    { signal: opts.signal, maxAttempts: opts.maxAttempts, onRetry: opts.onRetry },
-  );
-
-  const textBlock = response.content.find((b) => b.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('Keine Textantwort von Claude erhalten');
+  const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  let attempt = 1;
+  for (;;) {
+    throwIfAborted(opts.signal);
+    try {
+      const stream = anthropic.messages.stream(request, opts.signal ? { signal: opts.signal } : undefined);
+      const response = await stream.finalMessage();
+      const textBlock = response.content.find((b) => b.type === 'text');
+      if (!textBlock || textBlock.type !== 'text') {
+        throw new Error('Keine Textantwort von Claude erhalten');
+      }
+      const usage = normalizeUsage(response.usage);
+      return {
+        text: textBlock.text,
+        usage,
+        truncated: response.stop_reason === 'max_tokens',
+        model,
+        costUsd: estimateClaudeCostUsd(model, usage),
+      };
+    } catch (err) {
+      throwIfAborted(opts.signal);
+      if (attempt >= maxAttempts || !isRetryableError(err)) throw err;
+      const delayMs = retryDelayMs(err, attempt);
+      opts.onRetry?.({
+        attempt: attempt + 1,
+        maxAttempts,
+        delayMs,
+        status: statusFromError(err),
+        reason: retryReason(err),
+      });
+      await delay(delayMs, opts.signal);
+      attempt++;
+    }
   }
-  const usage = normalizeUsage(response.usage);
-  return {
-    text: textBlock.text,
-    usage,
-    truncated: response.stop_reason === 'max_tokens',
-    model,
-    costUsd: estimateClaudeCostUsd(model, usage),
-  };
 }
 
 export interface AskJsonResult<T> {

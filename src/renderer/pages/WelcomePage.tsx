@@ -27,9 +27,9 @@ export function WelcomePage() {
     setLoading(true);
     setError('');
     try {
-      const valid = await api.settings.validateApiKey(apiKey);
-      if (!valid) {
-        setError('API-Key ungültig. Bitte prüfen.');
+      const result = await api.settings.validateApiKey(apiKey);
+      if (!result.valid) {
+        setError(result.error || 'API-Key ungültig. Bitte prüfen.');
         setLoading(false);
         return;
       }

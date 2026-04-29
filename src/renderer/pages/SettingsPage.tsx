@@ -115,9 +115,9 @@ export function SettingsPage() {
     if (!newApiKey.trim()) return;
     setSavingApiKey(true);
     try {
-      const valid = await api.settings.validateApiKey(newApiKey);
-      if (!valid) {
-        addNotification('error', 'API-Key ungültig');
+      const result = await api.settings.validateApiKey(newApiKey);
+      if (!result.valid) {
+        addNotification('error', result.error || 'API-Key ungültig');
         setSavingApiKey(false);
         return;
       }

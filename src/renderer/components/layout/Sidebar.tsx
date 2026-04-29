@@ -19,6 +19,7 @@ const NAV_SECTION_VIS = [
 
 const NAV_SECTION_MGMT = [
   { to: '/ingest', icon: '\u26A1', label: 'Ingest' },
+  { to: '/review', icon: '!', label: 'Review' },
   { to: '/lint', icon: '\u2713', label: 'Gesundheitscheck' },
   { to: '/query', icon: '?', label: 'Query' },
 ];
@@ -217,9 +218,12 @@ export function Sidebar() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
 
   const wikiPages = useWikiStore((s) => s.pages);
+  const reviewQueue = useWikiStore((s) => s.reviewQueue);
   const setWikiPages = useWikiStore((s) => s.setPages);
   const setWikiLoading = useWikiStore((s) => s.setLoading);
+  const refreshReviewQueue = useWikiStore((s) => s.refreshReviewQueue);
   const wikiPageCount = wikiPages.filter((p) => !isSystemPage(p)).length;
+  const reviewCount = reviewQueue.length;
 
   const addNotification = useAppStore((s) => s.addNotification);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -242,7 +246,8 @@ export function Sidebar() {
       .then((pages) => setWikiPages(pages))
       .catch(() => setWikiPages([]))
       .finally(() => setWikiLoading(false));
-  }, [activeProject]);
+    refreshReviewQueue().catch(() => undefined);
+  }, [activeProject, refreshReviewQueue, setWikiLoading, setWikiPages]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -306,6 +311,9 @@ export function Sidebar() {
         )}
         {item.to === '/ingest' && !ingestRunning && rawNew > 0 && (
           <span className="nav-badge">{rawNew}</span>
+        )}
+        {item.to === '/review' && reviewCount > 0 && (
+          <span className="nav-badge">{reviewCount}</span>
         )}
       </NavLink>
     );

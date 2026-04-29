@@ -113,6 +113,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       run: () => go('/lint'),
     },
     {
+      id: 'review',
+      section: 'Aktionen',
+      title: 'Review',
+      subtitle: 'Offene Wiki-Seiten pruefen',
+      keywords: ['review', 'unreviewed', 'seed', 'stale', 'pruefen'],
+      run: () => go('/review'),
+    },
+    {
       id: 'graph',
       section: 'Ansichten',
       title: 'Graph',

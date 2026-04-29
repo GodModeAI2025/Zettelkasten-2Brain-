@@ -137,6 +137,13 @@ export interface LintSuggestions {
   synthesisCandidates: Array<{ title: string; pages: string[]; reason: string }>;
 }
 
+export interface OutputSourceReadiness {
+  sourceCount: number;
+  includedCount: number;
+  skippedUnreviewedCount: number;
+  skippedUnreviewed: string[];
+}
+
 export interface OutputInfo {
   name: string;
   lastGenerated: string | null;
@@ -145,6 +152,7 @@ export interface OutputInfo {
   sourcesPattern: string;
   model: string;
   skills: string[];
+  sourceReadiness: OutputSourceReadiness;
 }
 
 export interface OutputPrompt {
@@ -262,7 +270,7 @@ export interface BridgeApi {
     hasGitToken: () => Promise<boolean>;
     setApiKey: (key: string) => Promise<void>;
     setGitToken: (token: string) => Promise<void>;
-    validateApiKey: (key: string) => Promise<boolean>;
+    validateApiKey: (key: string) => Promise<{ valid: boolean; error?: string }>;
     selectDirectory: () => Promise<string | null>;
   };
   schedule: {

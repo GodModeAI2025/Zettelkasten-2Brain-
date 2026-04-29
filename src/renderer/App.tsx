@@ -9,6 +9,7 @@ import { WikiPage } from './pages/WikiPage';
 import { IngestPage } from './pages/IngestPage';
 import { GraphPage } from './pages/GraphPage';
 import { QueryPage } from './pages/QueryPage';
+import { ReviewPage } from './pages/ReviewPage';
 import { LintPage } from './pages/LintPage';
 import { OutputPage } from './pages/OutputPage';
 import { BrandPage } from './pages/BrandPage';
@@ -185,6 +186,7 @@ export function App() {
                 <Route path="/wiki/*" element={<WikiPage />} />
                 <Route path="/graph" element={<GraphPage />} />
                 <Route path="/ingest" element={<IngestPage />} />
+                <Route path="/review" element={<ReviewPage />} />
                 <Route path="/query" element={<QueryPage />} />
                 <Route path="/lint" element={<LintPage />} />
                 <Route path="/output/*" element={<OutputPage />} />

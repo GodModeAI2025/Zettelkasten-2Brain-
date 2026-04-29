@@ -10,15 +10,12 @@ import { ask } from '../core/claude';
 import { nowISO } from '../core/vault';
 import { BUILTIN_SKILLS, installBuiltinSkills } from '../core/skills/builtin';
 import { buildBrandContextBlock } from '../services/brand.service';
+import type { OutputInfo, OutputSourceReadiness } from '../../shared/api.types';
 
-interface OutputInfo {
-  name: string;
-  lastGenerated: string | null;
-  format: string;
-  promptPreview: string;
-  sourcesPattern: string;
-  model: string;
-  skills: string[];
+interface SourceEntry {
+  sf: string;
+  content: string;
+  isUnreviewed: boolean;
 }
 
 interface SkillInfo {
@@ -47,6 +44,13 @@ const PROMPT_DEFAULTS: ParsedPrompt = {
   body: '',
 };
 
+const EMPTY_SOURCE_READINESS: OutputSourceReadiness = {
+  sourceCount: 0,
+  includedCount: 0,
+  skippedUnreviewedCount: 0,
+  skippedUnreviewed: [],
+};
+
 function parsePromptFile(raw: string): ParsedPrompt {
   const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!fmMatch) return { ...PROMPT_DEFAULTS, body: raw };
@@ -63,6 +67,61 @@ function parsePromptFile(raw: string): ParsedPrompt {
     else if (key === 'skills') result.skills = value.split(',').map((s) => s.trim()).filter(Boolean);
   }
   return result;
+}
+
+function isUnreviewedWikiSource(content: string): boolean {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  return fmMatch ? /^reviewed:\s*false\b/m.test(fmMatch[1]) : false;
+}
+
+async function readSourceEntries(
+  projectPath: string,
+  sourcesPattern: string,
+  opts: { strict?: boolean } = {},
+): Promise<SourceEntry[]> {
+  const sourceFiles = opts.strict
+    ? await glob(sourcesPattern, { cwd: projectPath, nodir: true })
+    : await glob(sourcesPattern, { cwd: projectPath, nodir: true }).catch(() => []);
+
+  const loadEntry = async (sf: string): Promise<SourceEntry> => {
+    const content = await readFile(join(projectPath, sf), 'utf-8');
+    return { sf, content, isUnreviewed: isUnreviewedWikiSource(content) };
+  };
+
+  if (opts.strict) {
+    return Promise.all(sourceFiles.map(loadEntry));
+  }
+
+  const entries = await Promise.all(
+    sourceFiles.map(async (sf) => {
+      try {
+        return await loadEntry(sf);
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return entries.filter((entry): entry is SourceEntry => entry !== null);
+}
+
+async function inspectSourceReadiness(projectPath: string, sourcesPattern: string): Promise<OutputSourceReadiness> {
+  const entries = await readSourceEntries(projectPath, sourcesPattern);
+  const skippedUnreviewed = entries
+    .filter((entry) => entry.isUnreviewed)
+    .map((entry) => entry.sf)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    sourceCount: entries.length,
+    includedCount: entries.length - skippedUnreviewed.length,
+    skippedUnreviewedCount: skippedUnreviewed.length,
+    skippedUnreviewed,
+  };
+}
+
+function formatSourceContents(entries: SourceEntry[]): string[] {
+  return entries.map((entry) => `--- ${entry.sf} ---\n${entry.content}`);
 }
 
 function sendOutputProgress(outputName: string, phase: string, message: string): void {
@@ -107,21 +166,12 @@ async function generateInBackground(projectName: string, outputName: string): Pr
     ? `${skillContents.join('\n\n---\n\n')}\n\n---\n\n## Aufgabe\n\n${promptBody}`
     : promptBody;
 
-  const allSourceFiles = await glob(sourcesPattern, { cwd: projectPath, nodir: true });
-
   // Compound-Loop-Schutz: unreviewed Wiki-Seiten werden nicht in Outputs integriert.
-  const readEntries = await Promise.all(
-    allSourceFiles.map(async (sf) => {
-      const content = await readFile(join(projectPath, sf), 'utf-8');
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      const isUnreviewed = fmMatch ? /^reviewed:\s*false\b/m.test(fmMatch[1]) : false;
-      return { sf, content, isUnreviewed };
-    })
-  );
+  const readEntries = await readSourceEntries(projectPath, sourcesPattern, { strict: true });
   const kept = readEntries.filter((e) => !e.isUnreviewed);
   const skippedCount = readEntries.length - kept.length;
   const sourceFiles = kept.map((e) => e.sf);
-  const sourceContents = kept.map((e) => `--- ${e.sf} ---\n${e.content}`);
+  const sourceContents = formatSourceContents(kept);
 
   const skipNote = skippedCount > 0 ? ` (${skippedCount} unreviewed uebersprungen)` : '';
   sendOutputProgress(outputName, 'generating', `${sourceFiles.length} Quellen geladen${skipNote}. Warte auf Claude...`);
@@ -186,15 +236,9 @@ export async function checkAndRegenerateOutputs(projectName: string): Promise<vo
       if (!existsSync(promptPath)) continue;
 
       const parsed = parsePromptFile(await readFile(promptPath, 'utf-8'));
-      const sourceFiles = await glob(parsed.sources, { cwd: projectPath, nodir: true });
-      const readEntries = await Promise.all(
-        sourceFiles.map(async (sf) => readFile(join(projectPath, sf), 'utf-8'))
-      );
       // Hash ignoriert unreviewed Seiten, damit Auto-Update nicht durch Claude-Output getriggert wird.
-      const reviewedContents = readEntries.filter((content) => {
-        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        return !(fmMatch && /^reviewed:\s*false\b/m.test(fmMatch[1]));
-      });
+      const readEntries = await readSourceEntries(projectPath, parsed.sources, { strict: true });
+      const reviewedContents = formatSourceContents(readEntries.filter((entry) => !entry.isUnreviewed));
       const currentHash = createHash('md5').update(reviewedContents.join('\n')).digest('hex');
 
       if (currentHash !== config.source_hash) {
@@ -212,6 +256,7 @@ export async function checkAndRegenerateOutputs(projectName: string): Promise<vo
 export function registerOutputHandlers(): void {
   ipcMain.handle('output:list', async (_event, projectName: string) => {
     const vault = ProjectService.getVault(projectName);
+    const projectPath = ProjectService.getProjectPath(projectName);
     const configs = await glob('*/output.config.json', { cwd: vault.outputDir }).catch(() => []);
     const results: OutputInfo[] = [];
 
@@ -226,6 +271,7 @@ export function registerOutputHandlers(): void {
         try {
           parsed = parsePromptFile(await readFile(promptPath, 'utf-8'));
         } catch { /* Kein Prompt vorhanden */ }
+        const sourceReadiness = await inspectSourceReadiness(projectPath, parsed.sources);
 
         results.push({
           name: outputName,
@@ -235,9 +281,10 @@ export function registerOutputHandlers(): void {
           sourcesPattern: parsed.sources,
           model: parsed.model,
           skills: parsed.skills,
+          sourceReadiness,
         });
       } catch {
-        results.push({ name: outputName, lastGenerated: null, format: 'markdown', promptPreview: '', sourcesPattern: 'wiki/**/*.md', model: 'claude-sonnet-4-6', skills: [] });
+        results.push({ name: outputName, lastGenerated: null, format: 'markdown', promptPreview: '', sourcesPattern: 'wiki/**/*.md', model: 'claude-sonnet-4-6', skills: [], sourceReadiness: EMPTY_SOURCE_READINESS });
       }
     }
 
@@ -274,7 +321,16 @@ ${opts.prompt}
 
     await ProjectService.commitIfNeeded(projectName, `Skill erstellt: ${opts.name}`);
 
-    return { name: opts.name, lastGenerated: null, format: opts.format, promptPreview: opts.prompt.slice(0, 200), sourcesPattern: opts.sources, model: opts.model };
+    return {
+      name: opts.name,
+      lastGenerated: null,
+      format: opts.format,
+      promptPreview: opts.prompt.slice(0, 200),
+      sourcesPattern: opts.sources,
+      model: opts.model,
+      skills: [],
+      sourceReadiness: await inspectSourceReadiness(ProjectService.getProjectPath(projectName), opts.sources),
+    };
   });
 
   ipcMain.handle('output:generate', async (_event, projectName: string, outputName: string) => {
