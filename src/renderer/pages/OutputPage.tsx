@@ -1,15 +1,45 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/bridge';
 import { useProjectStore } from '../stores/project.store';
 import { useAppStore } from '../stores/app.store';
 import { useOutputStore } from '../stores/output.store';
 import { MarkdownViewer } from '../components/wiki/MarkdownViewer';
 import { MarpViewer, isMarpContent } from '../components/output/MarpViewer';
-import type { OutputInfo, OutputPrompt, SkillInfo } from '../../shared/api.types';
+import type { OutputInfo, OutputSourceReadiness, SkillInfo } from '../../shared/api.types';
 
 type ViewMode = 'list' | 'edit' | 'result' | 'skill-edit';
+type ReadinessTone = 'ok' | 'warn' | 'empty';
+
+const EMPTY_READINESS: OutputSourceReadiness = {
+  sourceCount: 0,
+  includedCount: 0,
+  skippedUnreviewedCount: 0,
+  skippedUnreviewed: [],
+};
+
+function getOutputReadiness(output?: OutputInfo): OutputSourceReadiness {
+  return output?.sourceReadiness ?? EMPTY_READINESS;
+}
+
+function getReadinessTone(output?: OutputInfo): ReadinessTone {
+  const readiness = getOutputReadiness(output);
+  if (readiness.sourceCount === 0) return 'empty';
+  if (readiness.skippedUnreviewedCount > 0) return 'warn';
+  return 'ok';
+}
+
+function formatReadiness(output?: OutputInfo): string {
+  const readiness = getOutputReadiness(output);
+  if (readiness.sourceCount === 0) return '0 Quellen gefunden';
+  if (readiness.skippedUnreviewedCount > 0) {
+    return `${readiness.includedCount} bereit · ${readiness.skippedUnreviewedCount} unreviewed ausgelassen`;
+  }
+  return `${readiness.includedCount} Quellen bereit`;
+}
 
 export function OutputPage() {
+  const navigate = useNavigate();
   const activeProject = useProjectStore((s) => s.activeProject);
   const addNotification = useAppStore((s) => s.addNotification);
   const [outputs, setOutputs] = useState<OutputInfo[]>([]);
@@ -23,7 +53,6 @@ export function OutputPage() {
   const startJob = useOutputStore((s) => s.startJob);
   const clearJob = useOutputStore((s) => s.clearJob);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-  const [prompt, setPrompt] = useState<OutputPrompt | null>(null);
   const [editBody, setEditBody] = useState('');
   const [editSources, setEditSources] = useState('wiki/**/*.md');
   const [editFormat, setEditFormat] = useState('markdown');
@@ -44,6 +73,10 @@ export function OutputPage() {
   const [newSkillName, setNewSkillName] = useState('');
   const [showCreateSkill, setShowCreateSkill] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const selectedOutputInfo = selectedOutput ? outputs.find((o) => o.name === selectedOutput) : undefined;
+  const selectedReadiness = getOutputReadiness(selectedOutputInfo);
+  const selectedReadinessTone = getReadinessTone(selectedOutputInfo);
+  const selectedSkippedPreview = selectedReadiness.skippedUnreviewed.slice(0, 8);
 
   const loadOutputs = useCallback(async () => {
     if (!activeProject) return;
@@ -71,14 +104,12 @@ export function OutputPage() {
     setViewMode('edit');
     try {
       const p = await api.output.readPrompt(activeProject, name);
-      setPrompt(p);
       setEditBody(p.body);
       setEditSources(p.sources);
       setEditFormat(p.format);
       setEditModel(p.model);
       setEditSkills(p.skills || []);
     } catch {
-      setPrompt(null);
       setEditBody('');
       setEditSkills([]);
     }
@@ -133,9 +164,9 @@ export function OutputPage() {
           loadOutputs();
           clearJob(selectedOutput);
         })
-        .catch(() => {});
+        .catch(() => undefined);
     }
-  }, [viewedJob?.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewedJob?.phase]);
 
   const handleViewResult = async () => {
     if (!activeProject || !selectedOutput) return;
@@ -178,6 +209,14 @@ export function OutputPage() {
     } catch (err) {
       addNotification('error', `Löschen fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
     }
+  };
+
+  const openReviewForSelectedOutput = () => {
+    const params = new URLSearchParams({ filter: 'unreviewed' });
+    if (selectedOutput && selectedReadiness.skippedUnreviewedCount > 0) {
+      params.set('output', selectedOutput);
+    }
+    navigate(`/review?${params.toString()}`);
   };
 
   // Skill-Aktionen
@@ -358,6 +397,48 @@ export function OutputPage() {
 
         {viewMode === 'edit' && (
           <div className="skill-editor">
+            <div className={`output-readiness-panel ${selectedReadinessTone}`}>
+              <div>
+                <span className="output-readiness-kicker">Quellen-Check</span>
+                <strong>{formatReadiness(selectedOutputInfo)}</strong>
+                <p>
+                  {selectedReadiness.skippedUnreviewedCount > 0
+                    ? 'Unreviewed Seiten werden bei der Generierung ausgelassen.'
+                    : 'Alle gefundenen Quellen duerfen in diesen Output einfließen.'}
+                </p>
+              </div>
+              <div className="output-readiness-grid">
+                <span>
+                  <strong>{selectedReadiness.sourceCount}</strong>
+                  <small>gefunden</small>
+                </span>
+                <span>
+                  <strong>{selectedReadiness.includedCount}</strong>
+                  <small>bereit</small>
+                </span>
+                <span>
+                  <strong>{selectedReadiness.skippedUnreviewedCount}</strong>
+                  <small>ausgelassen</small>
+                </span>
+              </div>
+              {selectedReadiness.skippedUnreviewedCount > 0 && (
+                <div className="output-readiness-skipped">
+                  <span>Ausgelassen</span>
+                  <div>
+                    {selectedSkippedPreview.map((path) => (
+                      <code key={path}>{path}</code>
+                    ))}
+                    {selectedReadiness.skippedUnreviewedCount > selectedSkippedPreview.length && (
+                      <small>+{selectedReadiness.skippedUnreviewedCount - selectedSkippedPreview.length} weitere</small>
+                    )}
+                  </div>
+                </div>
+              )}
+              <button className="btn btn-secondary btn-sm" onClick={openReviewForSelectedOutput}>
+                {selectedReadiness.skippedUnreviewedCount > 0 ? 'Output-Quellen reviewen' : 'Review oeffnen'}
+              </button>
+            </div>
+
             {/* Skills */}
             <div className="card" style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -697,6 +778,9 @@ export function OutputPage() {
               {output.promptPreview && (
                 <p className="skill-card-preview">{output.promptPreview}</p>
               )}
+              <span className={`output-readiness ${getReadinessTone(output)}`}>
+                {formatReadiness(output)}
+              </span>
               <div className="skill-card-footer">
                 <span className="skill-card-sources">{output.sourcesPattern}</span>
                 {isGenerating ? (

@@ -27,9 +27,9 @@ export function WelcomePage() {
     setLoading(true);
     setError('');
     try {
-      const valid = await api.settings.validateApiKey(apiKey);
-      if (!valid) {
-        setError('API-Key ungültig. Bitte prüfen.');
+      const result = await api.settings.validateApiKey(apiKey);
+      if (!result.valid) {
+        setError(result.error || 'API-Key ungültig. Bitte prüfen.');
         setLoading(false);
         return;
       }
@@ -79,6 +79,21 @@ export function WelcomePage() {
       await loadProjects();
       await setActiveProject(projectName);
       addNotification('success', `Projekt "${projectName}" erstellt`);
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setLoading(false);
+  };
+
+  const handleCreateDemoProject = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const project = await api.project.createDemo();
+      await loadProjects();
+      await setActiveProject(project.name);
+      addNotification('success', `Demo "${project.name}" erstellt`);
       navigate('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -179,9 +194,14 @@ export function WelcomePage() {
                 <option value="en">English</option>
               </select>
             </div>
-            <button className="btn btn-primary" onClick={handleCreateProject} disabled={loading || !projectName}>
-              {loading ? 'Erstelle...' : 'Projekt erstellen'}
-            </button>
+            <div className="welcome-actions">
+              <button className="btn btn-primary" onClick={handleCreateProject} disabled={loading || !projectName}>
+                {loading ? 'Erstelle...' : 'Projekt erstellen'}
+              </button>
+              <button className="btn btn-secondary" onClick={handleCreateDemoProject} disabled={loading}>
+                {loading ? 'Erstelle...' : 'Demo-Wissensraum'}
+              </button>
+            </div>
           </>
         )}
       </div>

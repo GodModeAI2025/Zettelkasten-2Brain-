@@ -4,6 +4,13 @@ export interface ProgressEntry {
   file: string;
   step: string;
   message: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  model?: string;
+  retryAttempt?: number;
+  retryMaxAttempts?: number;
+  retryDelayMs?: number;
 }
 
 export interface IngestSummary {
@@ -16,7 +23,7 @@ export interface IngestSummary {
   };
 }
 
-type IngestPhase = 'idle' | 'running' | 'committing' | 'complete' | 'error';
+type IngestPhase = 'idle' | 'running' | 'committing' | 'complete' | 'cancelled' | 'error';
 
 interface IngestState {
   phase: IngestPhase;
@@ -59,6 +66,9 @@ export const useIngestStore = create<IngestState>((set) => ({
       if (entry.file === '__summary__') {
         if (entry.step === 'complete') {
           return { phase: 'complete', summaryMessage: entry.message };
+        }
+        if (entry.step === 'cancelled') {
+          return { phase: 'cancelled', summaryMessage: entry.message };
         }
         if (entry.step === 'committing') {
           return { phase: 'committing', summaryMessage: entry.message };

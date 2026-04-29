@@ -12,6 +12,7 @@ import {
   rankPagesByKeywords,
   isSystemPage,
   toPageId,
+  updateFrontmatter,
   type WikiPage,
   type PendingStub,
 } from '../core/vault';
@@ -29,6 +30,37 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 const RELEVANT_PAGE_LIMIT = 12;
 const MAX_EXISTING_CONTEXT_CHARS = 80_000;
 const MAX_PAGE_ALLOW_LIST = 800;
+const MAX_TAGS_PER_PAGE = 8;
+const TAG_NAMESPACES = ['topic/', 'person/', 'company/', 'type/'];
+
+type IngestStep =
+  | 'pending'
+  | 'analyzing'
+  | 'thinking'
+  | 'retrying'
+  | 'converting'
+  | 'writing'
+  | 'done'
+  | 'error'
+  | 'cancelled'
+  | 'tokens'
+  | 'warning'
+  | 'empty'
+  | 'progress'
+  | 'committing'
+  | 'complete';
+
+interface ProgressDetails {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  model?: string;
+  retryAttempt?: number;
+  retryMaxAttempts?: number;
+  retryDelayMs?: number;
+}
+
+const activeIngestControllers = new Map<string, AbortController>();
 
 interface IngestResult {
   sourceFile?: string;
@@ -46,26 +78,141 @@ interface IngestResult {
   };
 }
 
-function sendProgress(file: string, step: string, message: string): void {
+function sendProgress(file: string, step: IngestStep, message: string, details: ProgressDetails = {}): void {
   const windows = BrowserWindow.getAllWindows();
   for (const win of windows) {
-    win.webContents.send('ingest:progress', { file, step, message });
+    win.webContents.send('ingest:progress', { file, step, message, ...details });
   }
+}
+
+function abortError(): Error {
+  const err = new Error('Ingest wurde abgebrochen.');
+  err.name = 'AbortError';
+  return err;
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortError();
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
+function normalizeTag(raw: unknown): string {
+  return String(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, '-')
+    .replace(/_+/g, '-')
+    .replace(/\/+/g, '/')
+    .replace(/[^a-z0-9/-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^[-/]+|[-/]+$/g, '');
+}
+
+function parseTagValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    return trimmed.split(',').map((v) => v.trim());
+  }
+  return [];
+}
+
+function isNamespacedTag(tag: string): boolean {
+  return TAG_NAMESPACES.some((prefix) => tag.startsWith(prefix) && tag.length > prefix.length);
+}
+
+function normalizeOperationTags(content: string, configuredTags: string[]): { content: string; warning?: string } {
+  const allowed = new Set(configuredTags.map(normalizeTag).filter(Boolean));
+  let warning: string | undefined;
+
+  const updated = updateFrontmatter(content, (fm) => {
+    const original = parseTagValues(fm.tags);
+    const accepted: string[] = [];
+    const rejected: string[] = [];
+
+    for (const rawTag of original) {
+      const tag = normalizeTag(rawTag);
+      if (!tag) continue;
+      const allowedByConfig = allowed.size > 0 && allowed.has(tag);
+      const allowedByNamespace = allowed.size === 0 && isNamespacedTag(tag);
+      if (!allowedByConfig && !allowedByNamespace) {
+        rejected.push(tag);
+        continue;
+      }
+      if (!accepted.includes(tag)) accepted.push(tag);
+    }
+
+    const limited = accepted.slice(0, MAX_TAGS_PER_PAGE);
+    if (accepted.length > MAX_TAGS_PER_PAGE || rejected.length > 0) {
+      const parts: string[] = [];
+      if (accepted.length > MAX_TAGS_PER_PAGE) {
+        parts.push(`${accepted.length - MAX_TAGS_PER_PAGE} Tag(s) wegen Limit entfernt`);
+      }
+      if (rejected.length > 0) {
+        parts.push(`${rejected.length} Tag(s) ausserhalb der Taxonomie entfernt`);
+      }
+      warning = parts.join(', ');
+    }
+    fm.tags = limited;
+  });
+
+  return { content: updated ?? content, warning };
+}
+
+function buildTagPolicy(configuredTags: string[]): string {
+  const normalized = configuredTags.map(normalizeTag).filter(Boolean);
+  if (normalized.length > 0) {
+    return [
+      `Verfuegbare Tags: ${normalized.join(', ')}`,
+      `Tag-Regel: Nutze AUSSCHLIESSLICH Tags aus dieser geschlossenen Liste, maximal ${MAX_TAGS_PER_PAGE} pro Seite. Erfinde keine neuen Tags.`,
+    ].join('\n');
+  }
+  return [
+    'Verfuegbare Tags: keine geschlossene Liste konfiguriert',
+    `Tag-Regel: Maximal ${MAX_TAGS_PER_PAGE} Tags pro Seite. Neue Tags muessen einen dieser Namespaces nutzen: ${TAG_NAMESPACES.join(', ')}. Keine freien Einwort-Tags.`,
+  ].join('\n');
+}
+
+function formatFrontmatterList(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join(', ') || '-';
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  return '-';
+}
+
+function buildDriftNeighborList(pages: WikiPage[]): string {
+  if (pages.length === 0) return '(keine BM25-Nachbarseiten gefunden)';
+  return pages.map((page, index) => {
+    const fm = page.frontmatter;
+    return [
+      `${index + 1}. ${page.relativePath}`,
+      `status: ${typeof fm.status === 'string' ? fm.status : '-'}`,
+      `updated: ${typeof fm.updated === 'string' ? fm.updated : '-'}`,
+      `sources: ${formatFrontmatterList(fm.sources)}`,
+      `tags: ${formatFrontmatterList(fm.tags)}`,
+    ].join(' | ');
+  }).join('\n');
 }
 
 /**
  * Wrapt ein Promise und emittiert alle 3 s ein `thinking`-Progress-Event,
  * damit das UI waehrend langer Claude-Calls nicht eingefroren wirkt.
  */
-async function withHeartbeat<T>(file: string, label: string, task: () => Promise<T>): Promise<T> {
+async function withHeartbeat<T>(file: string, label: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
   const start = Date.now();
   const tick = () => {
+    if (signal.aborted) return;
     const seconds = Math.round((Date.now() - start) / 1000);
     sendProgress(file, 'thinking', `${label} (${seconds}s)`);
   };
   tick();
   const interval = setInterval(tick, 3000);
   try {
+    throwIfAborted(signal);
     return await task();
   } finally {
     clearInterval(interval);
@@ -73,7 +220,14 @@ async function withHeartbeat<T>(file: string, label: string, task: () => Promise
 }
 
 export async function runIngest(projectName: string, files?: string[]): Promise<IngestResult[]> {
+  if (activeIngestControllers.has(projectName)) {
+    throw new Error(`Ingest laeuft bereits fuer Projekt "${projectName}".`);
+  }
+  const controller = new AbortController();
+  activeIngestControllers.set(projectName, controller);
+  const signal = controller.signal;
   const vault = ProjectService.getVault(projectName);
+  try {
     const config = await loadConfig(ProjectService.getProjectPath(projectName));
     const brandBlock = await buildBrandContextBlock(projectName);
     const results: IngestResult[] = [];
@@ -111,7 +265,13 @@ export async function runIngest(projectName: string, files?: string[]): Promise<
     const totalFiles = toProcess.length;
     let processedCount = 0;
     let errorCount = 0;
+    let cancelled = false;
+    const configuredTags = (config.ingest.tags || []).map(normalizeTag).filter(Boolean);
     const allFilledStubPaths = new Set<string>();
+
+    for (const file of toProcess) {
+      sendProgress(file, 'pending', 'Wartet auf Verarbeitung');
+    }
 
     const pageCacheByRelative = new Map<string, WikiPage>();
     for (const p of await vault.loadAllWikiPages()) {
@@ -125,9 +285,10 @@ export async function runIngest(projectName: string, files?: string[]): Promise<
     );
 
     for (const file of toProcess) {
-      sendProgress(file, 'analyzing', `Analysiere ${file}...`);
-
       try {
+        throwIfAborted(signal);
+        sendProgress(file, 'analyzing', `Analysiere ${file}...`);
+
         const ext = path.extname(file).toLowerCase();
         let rawContent: string;
         let imageBlocks: ImageBlock[] | undefined;
@@ -154,6 +315,9 @@ export async function runIngest(projectName: string, files?: string[]): Promise<
 
             if (!conversion.converted || !conversion.markdown) {
               sendProgress(file, 'error', conversion.error || `${file} konnte nicht konvertiert werden`);
+              errorCount++;
+              processedCount++;
+              sendProgress('__summary__', 'progress', `${processedCount} von ${totalFiles} Dateien verarbeitet`);
               continue;
             }
 
@@ -179,6 +343,7 @@ export async function runIngest(projectName: string, files?: string[]): Promise<
           MAX_EXISTING_CONTEXT_CHARS,
           'Keine bestehenden Wiki-Seiten gefunden.'
         );
+        const driftNeighbors = buildDriftNeighborList(relevantPages);
 
         let stubSection = '';
         if (pendingStubs.length > 0) {
@@ -199,7 +364,7 @@ export async function runIngest(projectName: string, files?: string[]): Promise<
 
 Themenfeld: ${config.domain || 'Allgemein'}
 Sprache: ${config.language === 'de' ? 'Deutsch' : 'English'}
-Verfuegbare Tags: ${config.ingest.tags.join(', ') || 'frei waehlbar'}
+${buildTagPolicy(configuredTags)}
 Entitaets-Typen: ${config.ingest.entityTypes.join(', ')}
 Konzept-Typen: ${config.ingest.conceptTypes.join(', ')}
 
@@ -213,6 +378,19 @@ ${allowListText}
 
 ${existingContext}${stubSection}
 
+## Pflicht: Drift-Compare gegen BM25-Nachbarseiten
+
+Pruefe JEDE der folgenden Nachbarseiten explizit gegen die neue Quelle:
+${driftNeighbors}
+
+Fuer jede Nachbarseite entscheide:
+- ERGAENZT die neue Quelle die Seite? Dann aktualisiere die Seite, sources, updated, confidence/status.
+- WIDERSPRICHT die neue Quelle der Seite? Dann dokumentiere den Widerspruch in summary.contradictions und im Seiteninhalt mit Quellenstand.
+- ERSETZT die neue Quelle die Seite vollstaendig? Dann aktualisiere die alte Seite mit status: stale und superseded_by: [[neue oder ersetzende Seite]] und melde dies in summary.superseded.
+- KEINE AENDERUNG? Dann nicht anfassen.
+
+summary.superseded muss leer sein, wenn keine Ersetzung vorliegt. Es darf nicht fehlen.
+
 ## Neue Quelle
 
 Dateiname: ${file}
@@ -223,6 +401,7 @@ ${rawContent}`;
         const { result, response, attempts, lastDiag } = await withHeartbeat(
           file,
           'KI analysiert',
+          signal,
           () =>
             askForJson<IngestResult>({
               system: INGEST_PROMPT,
@@ -230,10 +409,33 @@ ${rawContent}`;
               images: imageBlocks,
               model: config.models.ingest,
               maxTokens: 32768,
+              signal,
+              onRetry: (info) => {
+                sendProgress(
+                  file,
+                  'retrying',
+                  `API wiederholt Versuch ${info.attempt}/${info.maxAttempts} nach ${(info.delayMs / 1000).toFixed(1)}s (${info.reason})`,
+                  {
+                    retryAttempt: info.attempt,
+                    retryMaxAttempts: info.maxAttempts,
+                    retryDelayMs: info.delayMs,
+                  },
+                );
+              },
             }),
         );
 
-        sendProgress(file, 'tokens', `${response.usage.inputTokens.toLocaleString('de')} Input / ${response.usage.outputTokens.toLocaleString('de')} Output Tokens`);
+        sendProgress(
+          file,
+          'tokens',
+          `${response.usage.inputTokens.toLocaleString('de')} Input / ${response.usage.outputTokens.toLocaleString('de')} Output Tokens`,
+          {
+            inputTokens: response.usage.inputTokens,
+            outputTokens: response.usage.outputTokens,
+            costUsd: response.costUsd,
+            model: response.model,
+          },
+        );
 
         if (response.truncated) {
           sendProgress(file, 'warning', `Antwort wurde abgeschnitten (Token-Limit) — versuche Reparatur...`);
@@ -257,6 +459,11 @@ ${rawContent}`;
           for (const op of result.operations) {
             try {
               const safePath = requireRootPrefix(op.path, 'wiki');
+              const normalized = normalizeOperationTags(op.content, configuredTags);
+              op.content = normalized.content;
+              if (normalized.warning) {
+                sendProgress(file, 'warning', `Tag-Pruefung fuer ${safePath}: ${normalized.warning}`);
+              }
               await vault.writeFile(safePath, op.content);
 
               const wikiRelative = toPageId(safePath);
@@ -288,6 +495,16 @@ ${rawContent}`;
         sendProgress(file, 'done', `${file} verarbeitet: ${created} erstellt, ${updated} aktualisiert`);
         sendProgress('__summary__', 'progress', `${processedCount} von ${totalFiles} Dateien verarbeitet`);
       } catch (err) {
+        if (isAbortError(err)) {
+          cancelled = true;
+          processedCount++;
+          sendProgress(file, 'cancelled', `${file} abgebrochen.`);
+          for (const pendingFile of toProcess.slice(toProcess.indexOf(file) + 1)) {
+            sendProgress(pendingFile, 'cancelled', 'Nicht verarbeitet, weil der Ingest abgebrochen wurde.');
+          }
+          sendProgress('__summary__', 'progress', `${processedCount} von ${totalFiles} Dateien verarbeitet`);
+          break;
+        }
         errorCount++;
         processedCount++;
         sendProgress(file, 'error', `Fehler bei ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -357,18 +574,32 @@ ${rawContent}`;
     await updateIndexes(vault.wikiDir);
     await ProjectService.commitIfNeeded(projectName, `Ingest: ${toProcess.join(', ')}`);
 
-    const successCount = processedCount - errorCount;
-    sendProgress('__summary__', 'complete', `Ingest abgeschlossen: ${successCount} erfolgreich${errorCount > 0 ? `, ${errorCount} Fehler` : ''}`);
+    const successCount = results.length;
+    if (cancelled) {
+      sendProgress('__summary__', 'cancelled', `Ingest abgebrochen: ${successCount} erfolgreich${errorCount > 0 ? `, ${errorCount} Fehler` : ''}`);
+    } else {
+      sendProgress('__summary__', 'complete', `Ingest abgeschlossen: ${successCount} erfolgreich${errorCount > 0 ? `, ${errorCount} Fehler` : ''}`);
+    }
 
-    if (successCount > 0) {
+    if (!cancelled && successCount > 0) {
       checkAndRegenerateOutputs(projectName).catch(() => { /* Hintergrund */ });
     }
 
     return results;
+  } finally {
+    activeIngestControllers.delete(projectName);
+  }
 }
 
 export function registerIngestHandlers(): void {
   ipcMain.handle('ingest:run', async (_event, projectName: string, files?: string[]) => {
     return runIngest(projectName, files);
+  });
+
+  ipcMain.handle('ingest:cancel', async (_event, projectName: string) => {
+    const controller = activeIngestControllers.get(projectName);
+    if (!controller) return { cancelled: false };
+    controller.abort();
+    return { cancelled: true };
   });
 }

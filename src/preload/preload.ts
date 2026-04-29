@@ -24,10 +24,13 @@ const api = {
     forcePull: () => ipcRenderer.invoke('git:force-pull'),
     atRiskFiles: () => ipcRenderer.invoke('git:at-risk-files'),
     status: () => ipcRenderer.invoke('git:status'),
+    listChanges: () => ipcRenderer.invoke('git:list-changes'),
+    listRecentCommits: (limit?: number) => ipcRenderer.invoke('git:list-recent-commits', limit),
   },
   project: {
     list: () => ipcRenderer.invoke('project:list'),
     create: (opts: Record<string, unknown>) => ipcRenderer.invoke('project:create', opts),
+    createDemo: () => ipcRenderer.invoke('project:create-demo'),
     delete: (name: string) => ipcRenderer.invoke('project:delete', name),
     getConfig: (name: string) => ipcRenderer.invoke('project:get-config', name),
     setConfig: (name: string, cfg: Record<string, unknown>) => ipcRenderer.invoke('project:set-config', name, cfg),
@@ -46,7 +49,12 @@ const api = {
   wiki: {
     listPages: (proj: string, subdir?: string) => ipcRenderer.invoke('wiki:list-pages', proj, subdir),
     readPage: (proj: string, path: string) => ipcRenderer.invoke('wiki:read-page', proj, path),
+    createPage: (proj: string, input: Record<string, unknown>) => ipcRenderer.invoke('wiki:create-page', proj, input),
     setReviewed: (proj: string, path: string, reviewed: boolean) => ipcRenderer.invoke('wiki:set-reviewed', proj, path, reviewed),
+    updateFrontmatter: (proj: string, path: string, patch: Record<string, unknown>) =>
+      ipcRenderer.invoke('wiki:update-frontmatter', proj, path, patch),
+    listBacklinks: (proj: string, path: string) => ipcRenderer.invoke('wiki:list-backlinks', proj, path),
+    listReviewQueue: (proj: string) => ipcRenderer.invoke('wiki:list-review-queue', proj),
     getWikilinkMap: (proj: string) => ipcRenderer.invoke('wiki:get-wikilink-map', proj),
     getGraphData: (proj: string) => ipcRenderer.invoke('wiki:get-graph-data', proj),
     listPendingStubs: (proj: string) => ipcRenderer.invoke('wiki:list-pending-stubs', proj),
@@ -54,6 +62,7 @@ const api = {
   },
   ingest: {
     run: (proj: string, files?: string[]) => ipcRenderer.invoke('ingest:run', proj, files),
+    cancel: (proj: string) => ipcRenderer.invoke('ingest:cancel', proj),
   },
   query: {
     ask: (proj: string, question: string) => ipcRenderer.invoke('query:ask', proj, question),
@@ -116,7 +125,7 @@ const api = {
 
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const allowed = new Set(['ingest:progress', 'query:stream-chunk', 'query:stream-end', 'git:sync-status', 'files:upload-progress', 'lint:progress', 'output:progress', 'schedule:status']);
-    if (!allowed.has(channel)) return () => {};
+    if (!allowed.has(channel)) return () => undefined;
     const listener = (_event: Electron.IpcRendererEvent, ...args: unknown[]) => callback(...args);
     ipcRenderer.on(channel, listener);
     return () => { ipcRenderer.removeListener(channel, listener); };

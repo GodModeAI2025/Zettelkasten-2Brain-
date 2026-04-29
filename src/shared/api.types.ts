@@ -51,11 +51,69 @@ export interface ProjectStatus {
   syncEnabled: boolean;
 }
 
+export type GitChangeState = 'modified' | 'added' | 'deleted' | 'staged' | 'unchanged';
+
+export interface GitChange {
+  path: string;
+  project: string;
+  area: string;
+  state: GitChangeState;
+  staged: boolean;
+}
+
+export interface GitCommitInfo {
+  oid: string;
+  message: string;
+  authorName: string;
+  authorEmail: string;
+  date: string;
+}
+
 export interface WikiPage {
   path: string;
   relativePath: string;
   content: string;
   frontmatter: Record<string, unknown>;
+}
+
+export interface WikiFrontmatterPatch {
+  status?: string | null;
+  confidence?: string | null;
+  type?: string | null;
+  tags?: string[];
+  sources?: string[];
+  superseded_by?: string | null;
+  reviewed?: boolean;
+}
+
+export interface WikiBacklink {
+  path: string;
+  title: string;
+  count: number;
+  matches: string[];
+}
+
+export type WikiReviewReason = 'unreviewed' | 'seed' | 'stale' | 'low-confidence' | 'uncertain';
+
+export interface WikiReviewItem {
+  path: string;
+  title: string;
+  status: string;
+  confidence: string;
+  reviewed: boolean;
+  created: string;
+  updated: string;
+  reasons: WikiReviewReason[];
+  priority: number;
+}
+
+export type WikiPageCategory = 'sources' | 'entities' | 'concepts' | 'syntheses' | 'sops' | 'decisions';
+
+export interface WikiCreatePageInput {
+  title: string;
+  category?: WikiPageCategory | string;
+  path?: string;
+  sourcePath?: string;
 }
 
 export interface LintResult {
@@ -79,6 +137,13 @@ export interface LintSuggestions {
   synthesisCandidates: Array<{ title: string; pages: string[]; reason: string }>;
 }
 
+export interface OutputSourceReadiness {
+  sourceCount: number;
+  includedCount: number;
+  skippedUnreviewedCount: number;
+  skippedUnreviewed: string[];
+}
+
 export interface OutputInfo {
   name: string;
   lastGenerated: string | null;
@@ -87,6 +152,7 @@ export interface OutputInfo {
   sourcesPattern: string;
   model: string;
   skills: string[];
+  sourceReadiness: OutputSourceReadiness;
 }
 
 export interface OutputPrompt {
@@ -204,7 +270,7 @@ export interface BridgeApi {
     hasGitToken: () => Promise<boolean>;
     setApiKey: (key: string) => Promise<void>;
     setGitToken: (token: string) => Promise<void>;
-    validateApiKey: (key: string) => Promise<boolean>;
+    validateApiKey: (key: string) => Promise<{ valid: boolean; error?: string }>;
     selectDirectory: () => Promise<string | null>;
   };
   schedule: {
@@ -220,10 +286,13 @@ export interface BridgeApi {
     forcePull: () => Promise<{ success: boolean; error?: string }>;
     atRiskFiles: () => Promise<{ files: Array<{ project: string; path: string; full: string }> }>;
     status: () => Promise<{ clean: boolean; ahead: number; behind: number }>;
+    listChanges: () => Promise<GitChange[]>;
+    listRecentCommits: (limit?: number) => Promise<GitCommitInfo[]>;
   };
   project: {
     list: () => Promise<ProjectInfo[]>;
     create: (opts: Record<string, unknown>) => Promise<ProjectInfo>;
+    createDemo: () => Promise<ProjectInfo>;
     delete: (name: string) => Promise<void>;
     getConfig: (name: string) => Promise<Record<string, unknown>>;
     setConfig: (name: string, cfg: Record<string, unknown>) => Promise<void>;
@@ -244,7 +313,11 @@ export interface BridgeApi {
   wiki: {
     listPages: (proj: string, subdir?: string) => Promise<string[]>;
     readPage: (proj: string, path: string) => Promise<WikiPage>;
+    createPage: (proj: string, input: WikiCreatePageInput) => Promise<WikiPage>;
     setReviewed: (proj: string, path: string, reviewed: boolean) => Promise<WikiPage>;
+    updateFrontmatter: (proj: string, path: string, patch: WikiFrontmatterPatch) => Promise<WikiPage>;
+    listBacklinks: (proj: string, path: string) => Promise<WikiBacklink[]>;
+    listReviewQueue: (proj: string) => Promise<WikiReviewItem[]>;
     getWikilinkMap: (proj: string) => Promise<Record<string, string[]>>;
     getGraphData: (proj: string) => Promise<GraphData>;
     listPendingStubs: (proj: string) => Promise<PendingStub[]>;
@@ -252,6 +325,7 @@ export interface BridgeApi {
   };
   ingest: {
     run: (proj: string, files?: string[]) => Promise<unknown[]>;
+    cancel: (proj: string) => Promise<{ cancelled: boolean }>;
   };
   query: {
     ask: (proj: string, question: string) => Promise<QueryResult>;

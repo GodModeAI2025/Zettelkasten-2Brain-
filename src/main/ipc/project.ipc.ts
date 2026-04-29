@@ -106,8 +106,12 @@ Schlage nun die Liste vor. Bevorzuge Begriffe, die im Material wiederholt vorkom
     return { suggestions: cleaned, reasoning: result.reasoning ?? '' };
   });
 
-  ipcMain.handle('project:create', async (_event, opts: { name: string; domain: string; language: string; tags: string[] }) => {
+  ipcMain.handle('project:create', async (_event, opts: { name: string; domain: string; language: string; tags?: string[] }) => {
     return ProjectService.create(opts);
+  });
+
+  ipcMain.handle('project:create-demo', async () => {
+    return ProjectService.createDemo();
   });
 
   ipcMain.handle('project:delete', async (_event, name: string) => {

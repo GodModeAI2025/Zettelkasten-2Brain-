@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/bridge';
 import { useProjectStore } from '../stores/project.store';
 import { useAppStore } from '../stores/app.store';
 import { useWikiStore } from '../stores/wiki.store';
 import { MarkdownViewer } from '../components/wiki/MarkdownViewer';
 import { FrontmatterBadge } from '../components/wiki/FrontmatterBadge';
+import { WikiInspector } from '../components/wiki/WikiInspector';
+import type { WikiBacklink, WikiFrontmatterPatch } from '../../shared/api.types';
 
 function slugify(text: string): string {
   return text
@@ -44,10 +46,23 @@ function resolveWikilink(target: string, pages: string[]): string | null {
   return null;
 }
 
+function extractWikilinks(value: string): string[] {
+  const links: string[] = [];
+  const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(value)) !== null) {
+    links.push(match[1].trim());
+  }
+  return [...new Set(links)];
+}
+
+function stripWikiPrefix(relativePath: string): string {
+  return relativePath.replace(/^wiki\//, '');
+}
+
 function pageTitle(relativePath: string): string {
-  return relativePath
-    .replace(/\.md$/i, '')
-    .split('/').pop()!
+  const fallback = relativePath.replace(/\.md$/i, '');
+  return (fallback.split('/').pop() || fallback)
     .replace(/-/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -60,16 +75,27 @@ interface LoadedPage {
 
 export function WikiPage() {
   const activeProject = useProjectStore((s) => s.activeProject);
+  const refreshStatus = useProjectStore((s) => s.refreshStatus);
   const addNotification = useAppStore((s) => s.addNotification);
   const pages = useWikiStore((s) => s.pages);
   const activePage = useWikiStore((s) => s.activePage);
   const setActivePage = useWikiStore((s) => s.setActivePage);
+  const refreshPages = useWikiStore((s) => s.refreshPages);
+  const reviewQueue = useWikiStore((s) => s.reviewQueue);
+  const reviewQueueLoading = useWikiStore((s) => s.reviewLoading);
+  const refreshReviewQueue = useWikiStore((s) => s.refreshReviewQueue);
   const [loadedPage, setLoadedPage] = useState<LoadedPage | null>(null);
+  const [backlinks, setBacklinks] = useState<WikiBacklink[]>([]);
+  const [backlinksLoading, setBacklinksLoading] = useState(false);
+  const [creatingLink, setCreatingLink] = useState<string | null>(null);
+  const [savingInspector, setSavingInspector] = useState(false);
 
   // Seite laden wenn activePage sich aendert
   useEffect(() => {
     if (!activeProject || !activePage) {
       setLoadedPage(null);
+      setBacklinks([]);
+      setBacklinksLoading(false);
       return;
     }
     api.wiki.readPage(activeProject, activePage)
@@ -78,7 +104,31 @@ export function WikiPage() {
         addNotification('error', 'Seite konnte nicht geladen werden.');
         setLoadedPage(null);
       });
-  }, [activeProject, activePage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProject, activePage]);
+
+  useEffect(() => {
+    refreshReviewQueue();
+  }, [activeProject, refreshReviewQueue]);
+
+  useEffect(() => {
+    if (!activeProject || !activePage) return;
+    let cancelled = false;
+    setBacklinksLoading(true);
+    setBacklinks([]);
+    api.wiki.listBacklinks(activeProject, activePage)
+      .then((items) => {
+        if (!cancelled) setBacklinks(items);
+      })
+      .catch(() => {
+        if (!cancelled) setBacklinks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBacklinksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject, activePage]);
 
   const handleWikilinkClick = useCallback(
     (target: string) => {
@@ -86,11 +136,31 @@ export function WikiPage() {
       if (match) {
         setActivePage(match);
       } else {
-        addNotification('info', `Seite "${target}" nicht gefunden.`);
+        addNotification('info', `Seite "${target}" nicht gefunden. Du kannst sie im Inspektor anlegen.`);
       }
     },
     [pages, setActivePage, addNotification],
   );
+
+  const displayContent = loadedPage ? loadedPage.content.replace(/^---\n[\s\S]*?\n---\n?/, '') : '';
+  const currentPagePath = loadedPage ? stripWikiPrefix(loadedPage.relativePath) : activePage || '';
+  const currentReviewItem = useMemo(
+    () => reviewQueue.find((item) => item.path === currentPagePath) || null,
+    [reviewQueue, currentPagePath],
+  );
+  const nextReviewItem = useMemo(
+    () => reviewQueue.find((item) => item.path !== currentPagePath) || null,
+    [reviewQueue, currentPagePath],
+  );
+  const missingLinks = useMemo(() => {
+    if (!displayContent) return [];
+    return extractWikilinks(displayContent).filter((link) => !resolveWikilink(link, pages));
+  }, [displayContent, pages]);
+
+  const goToNextReview = useCallback(() => {
+    if (!nextReviewItem) return;
+    setActivePage(nextReviewItem.path);
+  }, [nextReviewItem, setActivePage]);
 
   if (!activeProject) {
     return (
@@ -112,53 +182,83 @@ export function WikiPage() {
     );
   }
 
-  // Frontmatter aus dem Content entfernen fuer die Anzeige
-  const displayContent = loadedPage.content.replace(/^---\n[\s\S]*?\n---\n?/, '');
-
-  const reviewed = loadedPage.frontmatter.reviewed as boolean | undefined;
-  const canToggleReview = reviewed !== undefined;
-
-  const handleToggleReview = async () => {
+  const handleFrontmatterSave = async (patch: WikiFrontmatterPatch) => {
     if (!activeProject || !loadedPage) return;
+    setSavingInspector(true);
     try {
-      const updated = await api.wiki.setReviewed(
+      const updated = await api.wiki.updateFrontmatter(
         activeProject,
         loadedPage.relativePath,
-        !(reviewed === true),
+        patch,
       );
       setLoadedPage({
         relativePath: updated.relativePath,
         content: updated.content,
         frontmatter: updated.frontmatter,
       });
+      await Promise.all([refreshStatus(), refreshReviewQueue()]);
+      addNotification('success', 'Wiki-Metadaten gespeichert.');
+    } catch (err) {
       addNotification(
-        'success',
-        !(reviewed === true) ? 'Als reviewed markiert.' : 'Review-Status zurueckgesetzt.',
+        'error',
+        `Metadaten konnten nicht gespeichert werden: ${err instanceof Error ? err.message : String(err)}`,
       );
-    } catch {
-      addNotification('error', 'Review-Status konnte nicht aktualisiert werden.');
+    } finally {
+      setSavingInspector(false);
+    }
+  };
+
+  const handleCreateMissingLink = async (title: string) => {
+    if (!activeProject || !loadedPage) return;
+    setCreatingLink(title);
+    try {
+      const created = await api.wiki.createPage(activeProject, {
+        title,
+        category: 'concepts',
+        sourcePath: loadedPage.relativePath,
+      });
+      await Promise.all([refreshPages(), refreshStatus(), refreshReviewQueue()]);
+      setActivePage(stripWikiPrefix(created.relativePath));
+      addNotification('success', `Wiki-Seite "${title}" angelegt.`);
+    } catch (err) {
+      addNotification(
+        'error',
+        `Seite konnte nicht angelegt werden: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setCreatingLink(null);
     }
   };
 
   return (
-    <div className="wiki-reader">
-      <div className="wiki-reader-header">
-        <h1>{pageTitle(loadedPage.relativePath)}</h1>
-        <FrontmatterBadge frontmatter={loadedPage.frontmatter} />
-        {canToggleReview && (
-          <button
-            type="button"
-            className={`btn btn-sm ${reviewed === true ? 'btn-secondary' : 'btn-primary'}`}
-            onClick={handleToggleReview}
-            style={{ marginLeft: 'auto' }}
-          >
-            {reviewed === true ? 'Review zuruecksetzen' : 'Als reviewed markieren'}
-          </button>
-        )}
-      </div>
-      <MarkdownViewer
+    <div className="wiki-workspace">
+      <article className="wiki-reader">
+        <div className="wiki-reader-header">
+          <h1>{pageTitle(loadedPage.relativePath)}</h1>
+          <FrontmatterBadge frontmatter={loadedPage.frontmatter} />
+        </div>
+        <MarkdownViewer
+          content={displayContent}
+          onWikilinkClick={handleWikilinkClick}
+        />
+      </article>
+      <WikiInspector
+        relativePath={loadedPage.relativePath}
         content={displayContent}
-        onWikilinkClick={handleWikilinkClick}
+        frontmatter={loadedPage.frontmatter}
+        backlinks={backlinks}
+        backlinksLoading={backlinksLoading}
+        missingLinks={missingLinks}
+        creatingLink={creatingLink}
+        reviewQueueCount={reviewQueue.length}
+        reviewQueueLoading={reviewQueueLoading}
+        currentReviewReasons={currentReviewItem?.reasons || []}
+        nextReviewTitle={nextReviewItem?.title || ''}
+        saving={savingInspector}
+        onSave={handleFrontmatterSave}
+        onNavigate={setActivePage}
+        onCreateMissingLink={handleCreateMissingLink}
+        onNextReview={goToNextReview}
       />
     </div>
   );

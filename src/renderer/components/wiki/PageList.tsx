@@ -29,7 +29,7 @@ export function PageList({ pages, activePage, onSelect }: PageListProps) {
       {sortedDirs.map((dir) => (
         <div key={dir || '__root__'} className="page-list-group">
           {dir && <div className="page-list-dir">{dir}/</div>}
-          {grouped.get(dir)!.map((page) => (
+          {(grouped.get(dir) || []).map((page) => (
             <button
               key={page}
               className={`page-list-item ${activePage === page ? 'active' : ''}`}

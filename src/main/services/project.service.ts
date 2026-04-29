@@ -2,7 +2,7 @@ import { readdir, mkdir, readFile, writeFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { GitService } from './git.service';
-import { Vault, WIKI_SUB_INDEXES, WIKI_CATEGORIES, today, generateWikilinkMap } from '../core/vault';
+import { Vault, WIKI_SUB_INDEXES, WIKI_CATEGORIES, today, generateWikilinkMap, updateIndexes } from '../core/vault';
 import { loadConfig, saveConfig, createDefaultConfig, type BrainConfig } from '../core/config';
 import { installBuiltinSkills } from '../core/skills/builtin';
 import { BrandService } from './brand.service';
@@ -33,10 +33,350 @@ export interface ProjectStatus {
   syncEnabled: boolean;
 }
 
+interface ProjectCreateOptions {
+  name: string;
+  domain: string;
+  language: string;
+  tags?: string[];
+}
+
 function getRepoDir(): string {
   const dir = GitService.getRepoDir();
   if (!dir) throw new Error('Kein Repository geklont.');
   return dir;
+}
+
+async function scaffoldProject(opts: ProjectCreateOptions): Promise<{ projectPath: string; vault: Vault; info: ProjectInfo }> {
+  const projectPath = join(getRepoDir(), opts.name);
+  if (existsSync(projectPath)) {
+    throw new Error(`Projekt "${opts.name}" existiert bereits.`);
+  }
+
+  const dirs = [
+    'raw',
+    'raw/assets',
+    ...WIKI_CATEGORIES.map((c) => `wiki/${c}`),
+    'output',
+    'brand',
+  ];
+
+  for (const dir of dirs) {
+    await mkdir(join(projectPath, dir), { recursive: true });
+  }
+
+  const vault = new Vault(projectPath);
+
+  await vault.writeFile(
+    'wiki/index.md',
+    `# ${opts.name} — Wiki\n\nMaster-Katalog des Wissens.\n\n## Quellen\n\n## Entitaeten\n\n## Konzepte\n\n## Synthesen\n\n## SOPs\n\n## Entscheidungen\n`
+  );
+
+  for (const [dir, content] of Object.entries(WIKI_SUB_INDEXES)) {
+    await vault.writeFile(`wiki/${dir}/index.md`, content);
+  }
+
+  await vault.writeFile(
+    'wiki/log.md',
+    `# Wiki-Protokoll\n\n## [${today()}] setup | Wiki initialisiert\nErstellt: "${opts.name}" fuer ${opts.domain || 'allgemeine Nutzung'}.\n`
+  );
+
+  const tags = Array.isArray(opts.tags) ? opts.tags : [];
+  const config = createDefaultConfig(opts.name, opts.domain, opts.language, tags);
+  await saveConfig(projectPath, config);
+
+  await generateWikilinkMap(join(projectPath, 'wiki'));
+
+  await installBuiltinSkills(vault.outputDir);
+
+  await BrandService.installDefaults(projectPath);
+
+  return {
+    projectPath,
+    vault,
+    info: { name: opts.name, domain: opts.domain, language: opts.language },
+  };
+}
+
+function nextDemoProjectName(): string {
+  const repoDir = getRepoDir();
+  const base = 'demo-wissensraum';
+  if (!existsSync(join(repoDir, base))) return base;
+
+  for (let index = 2; index < 1000; index++) {
+    const candidate = `${base}-${index}`;
+    if (!existsSync(join(repoDir, candidate))) return candidate;
+  }
+
+  throw new Error('Kein freier Demo-Projektname gefunden.');
+}
+
+function wikiPageFrontmatter(input: {
+  title: string;
+  type: string;
+  status: string;
+  confidence: string;
+  reviewed: boolean;
+  sources?: string[];
+  tags: string[];
+  date: string;
+}): string {
+  const sources = input.sources && input.sources.length > 0 ? `sources: [${input.sources.join(', ')}]\n` : '';
+  return `---
+title: ${input.title}
+type: ${input.type}
+status: ${input.status}
+confidence: ${input.confidence}
+reviewed: ${input.reviewed}
+${sources}tags: [${input.tags.join(', ')}]
+created: ${input.date}
+updated: ${input.date}
+---
+`;
+}
+
+async function writeDemoWorkspace(vault: Vault): Promise<void> {
+  const date = today();
+  const sourceFile = 'demo-zettelkasten.md';
+  const sourceRef = [sourceFile];
+
+  await vault.writeFile(
+    `raw/${sourceFile}`,
+    `# Demo-Notiz: Lokaler KI-Wissensraum
+
+Datum: ${date}
+Kontext: Ein kleines Team will Rohdaten, Entscheidungen und wiederholbare Ablaeufe in einem Git-basierten Wissensraum pflegen.
+
+Beobachtungen:
+- Rohdaten bleiben unveraendert im Ordner raw.
+- Jede extrahierte Erkenntnis landet als Wiki-Seite mit Quellen, Status, Confidence und Review-Feld.
+- Lokal-first Arbeit macht das System nachvollziehbar: Git zeigt, was sich wann geaendert hat.
+- KI-Ingestion ist nuetzlich, aber nur dann vertrauenswuerdig, wenn unsichere Aussagen markiert und spaeter geprueft werden.
+- Ein guter Einstieg braucht ein kleines Beispielprojekt, damit neue Nutzer den gesamten Kreislauf sehen koennen.
+
+Gewuenschter Ablauf:
+1. Rohdaten sammeln.
+2. Wiki-Seiten erzeugen oder manuell anlegen.
+3. Beziehungen ueber Wikilinks sichtbar machen.
+4. Review-Status im Inspector pruefen.
+5. Aus dem geprueften Wiki ein Briefing generieren.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/sources/demo-zettelkasten.md',
+    `${wikiPageFrontmatter({
+      title: 'Demo-Zettelkasten',
+      type: 'source',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'quelle', 'wissensmanagement'],
+      date,
+    })}# Demo-Zettelkasten
+
+Diese Quelle beschreibt einen kleinen, lokalen Wissensraum fuer 2Brain. Sie zeigt den Weg von Rohdaten ueber strukturierte Wiki-Seiten bis zu einem wiederverwendbaren Output.
+
+## Kernaussagen
+
+- [[lokal-first|Lokal-first]] sorgt fuer Nachvollziehbarkeit und Besitz der Daten.
+- [[ki-ingestion|KI-Ingestion]] hilft beim Start, braucht aber Review.
+- [[2brain|2Brain]] verbindet Rohdaten, Wiki, Git und Outputs in einem Arbeitsfluss.
+- Der [[demo-workflow|Demo-Workflow]] zeigt, wie daraus ein konkreter Nutzwert entsteht.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/concepts/lokal-first.md',
+    `${wikiPageFrontmatter({
+      title: 'Lokal-first',
+      type: 'concept',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'local-first', 'git'],
+      date,
+    })}# Lokal-first
+
+Lokal-first bedeutet hier: Der Wissensraum liegt als normale Dateien im geklonten Repository. Dadurch bleiben Rohdaten, Wiki-Seiten und Outputs auch ausserhalb der App lesbar.
+
+## Warum es zaehlt
+
+- Git macht Veraenderungen sichtbar.
+- Projektordner koennen getrennt betrachtet und synchronisiert werden.
+- Der [[review-loop|Review-Loop]] kann auf echten Dateien statt auf versteckten Datenbankeintraegen arbeiten.
+
+## Beziehung
+
+[[ki-ingestion|KI-Ingestion]] beschleunigt das Anlegen von Seiten, waehrend Lokal-first die Kontrolle ueber die Ergebnisse staerkt.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/concepts/ki-ingestion.md',
+    `${wikiPageFrontmatter({
+      title: 'KI-Ingestion',
+      type: 'concept',
+      status: 'seed',
+      confidence: 'medium',
+      reviewed: false,
+      sources: sourceRef,
+      tags: ['demo', 'ingestion', 'review'],
+      date,
+    })}# KI-Ingestion
+
+KI-Ingestion wandelt Rohdaten in erste Wiki-Kandidaten um. In diesem Demo-Raum ist die Seite bewusst noch nicht reviewed, damit der Inspector einen echten Prueffall zeigt.
+
+## Nutzen
+
+- Schnellere Extraktion von Begriffen, Entitaeten und Zusammenhaengen.
+- Direkte Verknuepfung mit Seiten wie [[lokal-first|Lokal-first]] und [[demo-workflow|Demo-Workflow]].
+- Markierung unsicherer Aussagen ueber Status und Confidence.
+
+## Offener Punkt
+
+Vor der Nutzung in Outputs sollte diese Seite geprueft und als reviewed markiert werden.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/entities/2brain.md',
+    `${wikiPageFrontmatter({
+      title: '2Brain',
+      type: 'product',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'produkt', 'wissensraum'],
+      date,
+    })}# 2Brain
+
+2Brain ist in diesem Demo-Projekt das Werkzeug, das Rohdaten, Wiki-Seiten, Git-Sync, Review und Outputs zusammenfuehrt.
+
+## Rolle im Wissensraum
+
+- Raw-Dateien bleiben als Quelle erhalten.
+- Wiki-Seiten machen Aussagen einzeln pruefbar.
+- [[demo-workflow|Demo-Workflow]] verbindet die Funktionen zu einem wiederholbaren Ablauf.
+
+## Naechste Verknuepfungen
+
+Siehe [[lokal-first|Lokal-first]], [[ki-ingestion|KI-Ingestion]] und [[review-loop|Review-Loop]].
+`
+  );
+
+  await vault.writeFile(
+    'wiki/syntheses/demo-workflow.md',
+    `${wikiPageFrontmatter({
+      title: 'Demo-Workflow',
+      type: 'synthesis',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'workflow', 'output'],
+      date,
+    })}# Demo-Workflow
+
+Der Demo-Workflow zeigt den wertvollsten Kreislauf im Produkt:
+
+1. Rohdaten in raw sammeln.
+2. Aussagen als Wiki-Seiten strukturieren.
+3. Beziehungen ueber Wikilinks sichtbar machen.
+4. Metadaten im Inspector pruefen.
+5. Aus reviewed Wissen einen Output erzeugen.
+
+## Warum das wichtig ist
+
+Der Ablauf verbindet [[lokal-first|Lokal-first]] mit [[ki-ingestion|KI-Ingestion]]. So entsteht ein Wissensraum, der nicht nur Inhalte speichert, sondern Entscheidungen und Folgeprodukte vorbereitet.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/sops/review-loop.md',
+    `${wikiPageFrontmatter({
+      title: 'Review-Loop',
+      type: 'sop',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'review', 'qualitaet'],
+      date,
+    })}# Review-Loop
+
+Dieser Ablauf haelt KI-gestuetzte Wiki-Seiten belastbar.
+
+## Schritte
+
+1. Neue oder unsichere Seiten in der Wiki-Ansicht oeffnen.
+2. Quellen, Status und Confidence im Inspector pruefen.
+3. Tags und Beziehungen ergaenzen.
+4. \`reviewed\` erst aktivieren, wenn die Seite fachlich stimmt.
+5. Danach kann die Seite in Outputs wie dem Demo-Briefing verwendet werden.
+
+## Bezug
+
+Der Review-Loop schuetzt den [[demo-workflow|Demo-Workflow]] vor ungeprueften Zwischenergebnissen.
+`
+  );
+
+  await vault.writeFile(
+    'wiki/decisions/demo-als-erster-einstieg.md',
+    `${wikiPageFrontmatter({
+      title: 'Demo als erster Einstieg',
+      type: 'decision',
+      status: 'confirmed',
+      confidence: 'high',
+      reviewed: true,
+      sources: sourceRef,
+      tags: ['demo', 'onboarding', 'entscheidung'],
+      date,
+    })}# Demo als erster Einstieg
+
+## Entscheidung
+
+Ein vorbereiteter Demo-Wissensraum wird als schneller Einstieg angeboten.
+
+## Begruendung
+
+Neue Nutzer verstehen das Produkt schneller, wenn sie sofort einen kleinen, vernetzten Raum sehen: Quelle, Konzepte, Entitaet, Synthese, SOP, Entscheidung und Output.
+
+## Folge
+
+Der Demo-Raum sollte klein bleiben und den [[demo-workflow|Demo-Workflow]] sichtbar machen, statt reale Projekte zu simulieren.
+`
+  );
+
+  await vault.writeFile(
+    'output/demo-briefing/prompt.md',
+    `---
+name: demo-briefing
+sources: wiki/**/*.md
+format: markdown
+model: claude-sonnet-4-6
+---
+
+Erstelle ein kurzes Management-Briefing zum Demo-Wissensraum.
+
+Struktur:
+- Ausgangslage
+- Wichtigste Erkenntnisse
+- Offene Pruefpunkte
+- Empfohlene naechste Schritte
+
+Nutze nur Aussagen aus dem Wiki-Kontext. Hebe hervor, welche Inhalte bereits reviewed sind und welche noch geprueft werden sollten.
+`
+  );
+
+  await vault.writeFile(
+    'output/demo-briefing/output.config.json',
+    JSON.stringify({ last_generated: null, source_hash: null, sources_used: [], archived_versions: 0 }, null, 2) + '\n'
+  );
+
+  await vault.appendLog(`\n## [${date}] demo | Demo-Wissensraum angelegt\nVerarbeitet: ${sourceFile}\n`);
 }
 
 export const ProjectService = {
@@ -151,57 +491,28 @@ export const ProjectService = {
     return projects;
   },
 
-  async create(opts: {
-    name: string;
-    domain: string;
-    language: string;
-    tags: string[];
-  }): Promise<ProjectInfo> {
-    const projectPath = join(getRepoDir(), opts.name);
-    if (existsSync(projectPath)) {
-      throw new Error(`Projekt "${opts.name}" existiert bereits.`);
-    }
-
-    const dirs = [
-      'raw',
-      'raw/assets',
-      ...WIKI_CATEGORIES.map((c) => `wiki/${c}`),
-      'output',
-      'brand',
-    ];
-
-    for (const dir of dirs) {
-      await mkdir(join(projectPath, dir), { recursive: true });
-    }
-
-    const vault = new Vault(projectPath);
-
-    await vault.writeFile(
-      'wiki/index.md',
-      `# ${opts.name} — Wiki\n\nMaster-Katalog des Wissens.\n\n## Quellen\n\n## Entitaeten\n\n## Konzepte\n\n## Synthesen\n\n## SOPs\n\n## Entscheidungen\n`
-    );
-
-    for (const [dir, content] of Object.entries(WIKI_SUB_INDEXES)) {
-      await vault.writeFile(`wiki/${dir}/index.md`, content);
-    }
-
-    await vault.writeFile(
-      'wiki/log.md',
-      `# Wiki-Protokoll\n\n## [${today()}] setup | Wiki initialisiert\nErstellt: "${opts.name}" fuer ${opts.domain || 'allgemeine Nutzung'}.\n`
-    );
-
-    const config = createDefaultConfig(opts.name, opts.domain, opts.language, opts.tags);
-    await saveConfig(projectPath, config);
-
-    await generateWikilinkMap(join(projectPath, 'wiki'));
-
-    await installBuiltinSkills(vault.outputDir);
-
-    await BrandService.installDefaults(projectPath);
-
+  async create(opts: ProjectCreateOptions): Promise<ProjectInfo> {
+    const { info } = await scaffoldProject(opts);
     await this.commitIfNeeded(opts.name, `Projekt erstellt: ${opts.name}`);
+    return info;
+  },
 
-    return { name: opts.name, domain: opts.domain, language: opts.language };
+  async createDemo(): Promise<ProjectInfo> {
+    const name = nextDemoProjectName();
+    const { projectPath, vault, info } = await scaffoldProject({
+      name,
+      domain: 'Demo: KI-gestuetztes Wissensmanagement',
+      language: 'de',
+      tags: ['demo', 'wissensmanagement', 'lokal-first', 'review'],
+    });
+
+    await writeDemoWorkspace(vault);
+    await updateIndexes(join(projectPath, 'wiki'));
+    await generateWikilinkMap(join(projectPath, 'wiki'));
+    vault.clearSearchIndex();
+
+    await this.commitIfNeeded(name, `Demo-Wissensraum erstellt: ${name}`);
+    return info;
   },
 
   async delete(name: string): Promise<void> {

@@ -45,7 +45,8 @@ export const useOutputStore = create<OutputState>((set) => ({
 
   clearJob: (outputName) =>
     set((s) => {
-      const { [outputName]: _, ...rest } = s.jobs;
+      const rest = { ...s.jobs };
+      delete rest[outputName];
       return { jobs: rest };
     }),
 }));

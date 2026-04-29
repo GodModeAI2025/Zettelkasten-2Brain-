@@ -3,7 +3,10 @@ import { readFile } from 'fs/promises';
 import { join, basename, dirname } from 'path';
 import { ProjectService } from '../services/project.service';
 import { extractWikilinks, pageAliases, linkTargetAliases } from '../core/wikilinks';
-import { isSystemPage, toPageId, updateFrontmatter, today } from '../core/vault';
+import { generateWikilinkMap, isSystemPage, toPageId, updateFrontmatter, updateIndexes } from '../core/vault';
+import { applyWikiFrontmatterPatch } from '../core/wiki-frontmatter';
+import { createWikiPageDraft } from '../core/wiki-page-draft';
+import { buildWikiReviewQueue } from '../core/wiki-review';
 import {
   computeEdgeWeight,
   cosineSimilarity,
@@ -12,7 +15,8 @@ import {
   tfNormSquared,
 } from '../core/graph-weights';
 import { analyzeGraph, normalizePageRank } from '../core/graph-analysis';
-import type { GraphNode, GraphEdge, GraphData } from '../../shared/api.types';
+import { findBacklinks } from '../core/wiki-relations';
+import type { GraphNode, GraphEdge, GraphData, WikiCreatePageInput, WikiFrontmatterPatch } from '../../shared/api.types';
 
 export function registerWikiHandlers(): void {
   ipcMain.handle('wiki:list-pages', async (_event, projectName: string, subdir?: string) => {
@@ -25,23 +29,67 @@ export function registerWikiHandlers(): void {
     return vault.readWikiPage(relativePath);
   });
 
+  ipcMain.handle('wiki:create-page', async (_event, projectName: string, input: WikiCreatePageInput) => {
+    const vault = ProjectService.getVault(projectName);
+    const draft = createWikiPageDraft(input);
+    const wikiRelativePath = join('wiki', draft.relativePath);
+
+    if (await vault.fileExists(wikiRelativePath)) {
+      throw new Error(`Wiki-Seite "${draft.relativePath}" existiert bereits.`);
+    }
+
+    await vault.writeFile(wikiRelativePath, draft.content);
+    await vault.removePendingStubs(new Set([draft.stubPath]));
+    await updateIndexes(vault.wikiDir);
+    await generateWikilinkMap(vault.wikiDir);
+    vault.clearSearchIndex();
+    await ProjectService.commitIfNeeded(projectName, `Wiki-Seite angelegt: ${wikiRelativePath}`);
+
+    return vault.readWikiPage(draft.relativePath);
+  });
+
   ipcMain.handle(
     'wiki:set-reviewed',
     async (_event, projectName: string, relativePath: string, reviewed: boolean) => {
       const vault = ProjectService.getVault(projectName);
       const page = await vault.readWikiPage(relativePath);
+      let changedFields: string[] = [];
       const updated = updateFrontmatter(page.content, (fm) => {
-        fm.reviewed = reviewed;
-        fm.updated = today();
+        changedFields = applyWikiFrontmatterPatch(fm, { reviewed });
       });
       if (!updated) {
         throw new Error(`Seite "${relativePath}" hat kein Frontmatter.`);
       }
+      if (changedFields.length === 0) return page;
       const rel = relativePath.startsWith('wiki/') ? relativePath : join('wiki', relativePath);
       await vault.writeFile(rel, updated);
       await ProjectService.commitIfNeeded(
         projectName,
         `Review: ${rel} → reviewed=${reviewed}`,
+      );
+      return vault.readWikiPage(relativePath);
+    },
+  );
+
+  ipcMain.handle(
+    'wiki:update-frontmatter',
+    async (_event, projectName: string, relativePath: string, patch: WikiFrontmatterPatch) => {
+      const vault = ProjectService.getVault(projectName);
+      const page = await vault.readWikiPage(relativePath);
+      let changedFields: string[] = [];
+      const updated = updateFrontmatter(page.content, (fm) => {
+        changedFields = applyWikiFrontmatterPatch(fm, patch);
+      });
+      if (!updated) {
+        throw new Error(`Seite "${relativePath}" hat kein Frontmatter.`);
+      }
+      if (changedFields.length === 0) return page;
+
+      const rel = relativePath.startsWith('wiki/') ? relativePath : join('wiki', relativePath);
+      await vault.writeFile(rel, updated);
+      await ProjectService.commitIfNeeded(
+        projectName,
+        `Wiki-Metadaten aktualisiert: ${rel} (${changedFields.join(', ')})`,
       );
       return vault.readWikiPage(relativePath);
     },
@@ -55,6 +103,18 @@ export function registerWikiHandlers(): void {
     } catch {
       return {};
     }
+  });
+
+  ipcMain.handle('wiki:list-backlinks', async (_event, projectName: string, relativePath: string) => {
+    const vault = ProjectService.getVault(projectName);
+    const pages = await vault.loadAllWikiPages();
+    return findBacklinks(pages, relativePath);
+  });
+
+  ipcMain.handle('wiki:list-review-queue', async (_event, projectName: string) => {
+    const vault = ProjectService.getVault(projectName);
+    const pages = await vault.loadAllWikiPages();
+    return buildWikiReviewQueue(pages);
   });
 
   ipcMain.handle('wiki:list-pending-stubs', async (_event, projectName: string) => {

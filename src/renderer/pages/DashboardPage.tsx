@@ -2,10 +2,12 @@ import { useEffect, useState, useCallback } from 'react';
 import { useProjectStore } from '../stores/project.store';
 import { useAppStore } from '../stores/app.store';
 import { useIngestStore } from '../stores/ingest.store';
+import { useWikiStore } from '../stores/wiki.store';
 import { IngestProgress } from '../components/ingest/IngestProgress';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/bridge';
 import { ConfirmDialog } from '../components/shared/ConfirmDialog';
+import type { WikiReviewItem, WikiReviewReason } from '../../shared/api.types';
 
 interface ProjectConfig {
   name: string;
@@ -16,9 +18,22 @@ interface ProjectConfig {
   output: { format: string };
 }
 
+const REVIEW_REASON_LABELS: Record<WikiReviewReason, string> = {
+  unreviewed: 'unreviewed',
+  seed: 'seed',
+  stale: 'stale',
+  'low-confidence': 'low confidence',
+  uncertain: 'uncertain',
+};
+
 export function DashboardPage() {
+  const navigate = useNavigate();
   const { activeProject, activeStatus, refreshStatus } = useProjectStore();
   const addNotification = useAppStore((s) => s.addNotification);
+  const setActivePage = useWikiStore((s) => s.setActivePage);
+  const reviewItems = useWikiStore((s) => s.reviewQueue);
+  const reviewLoading = useWikiStore((s) => s.reviewLoading);
+  const refreshReviewQueue = useWikiStore((s) => s.refreshReviewQueue);
   const ingestPhase = useIngestStore((s) => s.phase);
   const ingestProgress = useIngestStore((s) => s.progress);
   const ingestSummaryMessage = useIngestStore((s) => s.summaryMessage);
@@ -34,6 +49,7 @@ export function DashboardPage() {
   const [showConfigEditor, setShowConfigEditor] = useState(false);
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [cancellingIngest, setCancellingIngest] = useState(false);
 
   // Editable fields as strings for easier editing
   const [domain, setDomain] = useState('');
@@ -68,7 +84,29 @@ export function DashboardPage() {
   useEffect(() => {
     refreshStatus();
     loadConfig();
-  }, [activeProject, loadConfig]);
+    refreshReviewQueue();
+  }, [activeProject, loadConfig, refreshReviewQueue]);
+
+  useEffect(() => {
+    if (ingestPhase !== 'running' && ingestPhase !== 'committing') {
+      setCancellingIngest(false);
+    }
+  }, [ingestPhase]);
+
+  const cancelIngest = async () => {
+    if (!activeProject || cancellingIngest) return;
+    setCancellingIngest(true);
+    try {
+      const res = await api.ingest.cancel(activeProject);
+      if (!res.cancelled) {
+        addNotification('info', 'Kein laufender Ingest gefunden.');
+        setCancellingIngest(false);
+      }
+    } catch (err) {
+      addNotification('error', `Abbruch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
+      setCancellingIngest(false);
+    }
+  };
 
   const markDirty = () => setConfigDirty(true);
 
@@ -134,11 +172,17 @@ export function DashboardPage() {
       await api.ingest.run(activeProject, allRaw);
       addNotification('success', 'Wiki wurde neu aufgebaut.');
       await refreshStatus();
+      await refreshReviewQueue();
     } catch (err) {
       addNotification('error', `Wiki-Neuaufbau fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setRebuilding(false);
     }
+  };
+
+  const openReviewItem = (item: WikiReviewItem) => {
+    setActivePage(item.path);
+    navigate('/wiki');
   };
 
   if (!activeProject) {
@@ -165,7 +209,7 @@ export function DashboardPage() {
 
   const s = activeStatus;
 
-  const showRebuildProgress = rebuilding || ingestPhase === 'complete';
+  const showRebuildProgress = rebuilding || ingestPhase !== 'idle';
 
   return (
     <div>
@@ -183,8 +227,10 @@ export function DashboardPage() {
             processedFiles={ingestProcessedFiles}
             summaryMessage={ingestSummaryMessage}
             startedAt={ingestStartedAt}
+            onCancel={cancelIngest}
+            cancelling={cancellingIngest}
           />
-          {!rebuilding && ingestPhase === 'complete' && (
+          {!rebuilding && (ingestPhase === 'complete' || ingestPhase === 'cancelled') && (
             <div style={{ marginTop: 8, textAlign: 'right' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => ingestReset()}>
                 Fortschritt ausblenden
@@ -236,6 +282,50 @@ export function DashboardPage() {
         <Link to="/raw" className="btn btn-primary">Datei hochladen</Link>
         <Link to="/ingest" className="btn btn-secondary">Ingest starten</Link>
         <Link to="/query" className="btn btn-secondary">Frage stellen</Link>
+      </div>
+
+      <div className="card dashboard-review-card">
+        <div className="dashboard-review-header">
+          <div>
+            <h3>Review-Warteschlange</h3>
+            <p>Seiten mit Review-Bedarf, Seed-Status oder niedriger Confidence.</p>
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={refreshReviewQueue} disabled={reviewLoading}>
+            {reviewLoading ? 'Lade...' : 'Aktualisieren'}
+          </button>
+        </div>
+
+        {reviewLoading && reviewItems.length === 0 ? (
+          <p className="dashboard-review-muted">Pruefe Wiki-Seiten...</p>
+        ) : reviewItems.length === 0 ? (
+          <p className="dashboard-review-muted">Alles ruhig: keine Seiten mit Review-Bedarf gefunden.</p>
+        ) : (
+          <div className="dashboard-review-list">
+            {reviewItems.slice(0, 6).map((item) => (
+              <button
+                key={item.path}
+                type="button"
+                className="dashboard-review-item"
+                onClick={() => openReviewItem(item)}
+              >
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.path}</span>
+                </div>
+                <div className="dashboard-review-reasons">
+                  {item.reasons.map((reason) => (
+                    <em key={reason}>{REVIEW_REASON_LABELS[reason]}</em>
+                  ))}
+                </div>
+              </button>
+            ))}
+            {reviewItems.length > 6 && (
+              <div className="dashboard-review-more">
+                +{reviewItems.length - 6} weitere Seiten
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* === Projekt-Konfiguration === */}

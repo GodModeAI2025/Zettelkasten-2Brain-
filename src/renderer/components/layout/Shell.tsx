@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { CommandPalette } from './CommandPalette';
 import { useAppStore } from '../../stores/app.store';
 import { useActivityStore } from '../../stores/activity.store';
 import { ErrorBoundary } from '../shared/ErrorBoundary';
@@ -11,27 +12,31 @@ export function Shell() {
   const { notifications, dismissNotification, online } = useAppStore();
   const activities = useActivityStore((s) => s.activities);
   const navigate = useNavigate();
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
       if (!isMod) return;
 
-      switch (e.key) {
+      switch (e.key.toLowerCase()) {
         case 'k':
           e.preventDefault();
-          navigate('/query');
+          setCommandPaletteOpen(true);
           break;
         case 'u':
           e.preventDefault();
+          if (commandPaletteOpen) break;
           navigate('/raw');
           break;
         case 'i':
           e.preventDefault();
+          if (commandPaletteOpen) break;
           navigate('/ingest');
           break;
         case 'w':
           e.preventDefault();
+          if (commandPaletteOpen) break;
           navigate('/wiki');
           break;
       }
@@ -39,7 +44,7 @@ export function Shell() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [navigate, commandPaletteOpen]);
 
   // Aggregate progress across all activities (indeterminate if none have progress)
   const activitiesWithProgress = activities.filter((a) => a.progress != null);
@@ -88,6 +93,10 @@ export function Shell() {
 
       {/* Fehler-Dialog */}
       <ErrorDialog />
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+      />
     </div>
   );
 }

@@ -57,4 +57,14 @@ export function registerGitHandlers(): void {
     }
     return GitService.status();
   });
+
+  ipcMain.handle('git:list-changes', async () => {
+    if (!GitService.isCloned()) return [];
+    return GitService.listChanges();
+  });
+
+  ipcMain.handle('git:list-recent-commits', async (_event, limit?: number) => {
+    if (!GitService.isCloned()) return [];
+    return GitService.listRecentCommits(limit);
+  });
 }

@@ -1,4 +1,4 @@
-import { ipcMain, nativeTheme, powerSaveBlocker, dialog, BrowserWindow } from 'electron';
+import { ipcMain, nativeTheme, powerSaveBlocker, dialog, BrowserWindow, type OpenDialogOptions } from 'electron';
 import { SettingsService, type AppSettings } from '../services/settings.service';
 import { SchedulerService } from '../services/scheduler.service';
 import { resetClient } from '../core/claude';
@@ -56,7 +56,7 @@ export function registerSettingsHandlers(): void {
   });
 
   ipcMain.handle('settings:set-api-key', async (_event, key: string) => {
-    await SettingsService.setApiKey(key);
+    await SettingsService.setApiKey(key.trim());
     resetClient();
   });
 
@@ -66,27 +66,34 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:select-directory', async () => {
     const win = BrowserWindow.getFocusedWindow();
-    const result = await dialog.showOpenDialog(win!, {
+    const options: OpenDialogOptions = {
       title: 'Arbeitsverzeichnis waehlen',
       properties: ['openDirectory', 'createDirectory'],
       defaultPath: getDataDirectory(),
-    });
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
 
   ipcMain.handle('settings:validate-api-key', async (_event, key: string) => {
+    const trimmed = key.trim();
+    if (!trimmed) return { valid: false, error: 'Key ist leer' };
     try {
       const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey: key });
+      const client = new Anthropic({ apiKey: trimmed });
       await client.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 10,
         messages: [{ role: 'user', content: 'ping' }],
       });
-      return true;
-    } catch {
-      return false;
+      return { valid: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[settings:validate-api-key]', msg);
+      return { valid: false, error: msg };
     }
   });
 }
