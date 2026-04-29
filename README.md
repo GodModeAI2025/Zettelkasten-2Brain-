@@ -11,12 +11,15 @@ Wirft rohe Notizen, PDFs, DOCX oder HTML-Dokumente hinein und laesst Claude dara
 - **KI-Ingestion** — Claude analysiert neue Quellen und erzeugt/aktualisiert Wiki-Seiten mit Entitaeten, Konzepten und Synthesen.
 - **Takeaway-Diskussion** — Pro extrahierter Kernaussage ein Sparring-Chat; optional als Synthese-Seite speichern.
 - **Wiki-Browser** — Markdown-Rendering mit klickbaren Wikilinks, Frontmatter-Badges und Baumnavigation.
+- **Wiki Inspector** — Seitenpanel mit Backlinks, Frontmatter-Details und Schnell-Aktionen direkt im Wiki-Browser.
+- **Review Workflow** — Dedizierte Seite zum Pruefen von unreviewed, seed, stale und unsicheren Wiki-Seiten. Inline-Preview und Frontmatter-Editor. Compound-Loop-Schutz: unreviewed Seiten fliessen nicht in Outputs ein.
 - **Knowledge Graph** — Interaktive Netzwerk-Visualisierung aller Wiki-Seiten und deren Verlinkungen.
 - **KI-Query** — Fragen ans Wiki stellen mit BM25-Ranking (persistenter Index), Token-Streaming und Quellenangaben.
 - **Gesundheitscheck + Lernvorschlaege** — Mechanische Reparatur plus KI-generierte Fragen, Luecken und Synthese-Kandidaten.
-- **Output-Generierung** — Benutzerdefinierte Synthesen aus dem Wiki; Marp-Praesentationen werden in der App als Slide-Deck gerendert.
+- **Output-Generierung** — Benutzerdefinierte Synthesen aus dem Wiki mit Source-Readiness-Anzeige. Marp-Praesentationen werden in der App als Slide-Deck gerendert.
 - **Built-in Skills** — Mitgelieferte Prompt-Bausteine (z.B. `marp-presentation`) per Klick installierbar.
-- **Git-Sync** — Automatische Versionierung und Synchronisation ueber ein Git-Repository.
+- **Command Palette** — Schnellzugriff auf alle Bereiche und Aktionen via `Cmd+K`.
+- **Git-Sync** — Automatische Versionierung und Synchronisation ueber ein Git-Repository. Aenderungshistorie in der App einsehbar.
 - **Multi-Projekt** — Mehrere Wissensbasen in einem Repository verwalten.
 
 Architektur- und Feature-Entscheidungen sind in [`docs/adr/`](docs/adr/) dokumentiert.
