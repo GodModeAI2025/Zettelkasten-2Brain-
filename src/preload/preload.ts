@@ -106,6 +106,20 @@ const api = {
     delete: (proj: string, name: string) => ipcRenderer.invoke('output:delete', proj, name),
   },
 
+  okf: {
+    export: (proj: string, opts?: { targetDir?: string; zip?: boolean }) =>
+      ipcRenderer.invoke('okf:export', proj, opts),
+    exportHtml: (proj: string, opts?: { targetPath?: string }) =>
+      ipcRenderer.invoke('wiki:export-html', proj, opts),
+    import: (proj: string, opts?: { sourceDir?: string }) =>
+      ipcRenderer.invoke('wiki:import-bundle', proj, opts),
+  },
+
+  web: {
+    enrich: (proj: string, opts: { seedUrls: string[]; maxPages?: number }) =>
+      ipcRenderer.invoke('web:enrich', proj, opts),
+  },
+
   skill: {
     list: (proj: string) => ipcRenderer.invoke('skill:list', proj),
     read: (proj: string, name: string) => ipcRenderer.invoke('skill:read', proj, name),

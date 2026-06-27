@@ -9,6 +9,9 @@ import {
   updateFrontmatter,
   isSystemPage,
   toPageId,
+  ensureFrontmatterType,
+  categoryFromWikiPath,
+  typeForCategory,
 } from '../core/vault';
 import { extractWikilinks, pageAliases, linkTargetAliases } from '../core/wikilinks';
 import { loadConfig } from '../core/config';
@@ -165,8 +168,13 @@ export function registerLintHandlers(): void {
       }
     }
 
-    const errors = brokenLinks.length + supersededNotStale.length + seedWithMultipleSources.length;
-    const warnings = orphans.length + indexMissing.length + stalePages.length + uncertainPages.length;
+    // Nur Broken Links sind harte Fehler (actionable, der Auto-Fixer erzeugt fehlende Seiten).
+    // Lifecycle-Zustaende (superseded/seed-mit-Quellen) sind Warnungen — der Fixer korrigiert
+    // sie ohnehin mechanisch. Streng schreiben, tolerant lesen (Postel's Law / OKF-KonsumModell).
+    const errors = brokenLinks.length;
+    const warnings =
+      orphans.length + indexMissing.length + stalePages.length + uncertainPages.length +
+      supersededNotStale.length + seedWithMultipleSources.length;
 
     return {
       brokenLinks,
@@ -226,6 +234,10 @@ export function registerLintHandlers(): void {
         if (!fm.status) { fm.status = 'seed'; added.push('status'); }
         if (!fm.confidence) { fm.confidence = 'low'; added.push('confidence'); }
         if (fm.reviewed === undefined) { fm.reviewed = false; added.push('reviewed'); }
+        if (typeof fm.type !== 'string' || !fm.type.trim()) {
+          const migratedType = typeForCategory(categoryFromWikiPath(entry.id) ?? '');
+          if (migratedType) { fm.type = migratedType; added.push('type'); }
+        }
         if (added.length > 0) pageActions.push(`Fehlende Felder ergaenzt: ${added.join(', ')}`);
       });
 
@@ -405,7 +417,7 @@ ${targetSections}`;
                   safePath = requireRootPrefix(safePath, 'wiki');
                 }
 
-                await vault.writeFile(safePath, page.content);
+                await vault.writeFile(safePath, ensureFrontmatterType(page.content, safePath));
                 iterCreated++;
                 totalCreated++;
                 const pageId = toPageId(safePath);

@@ -13,6 +13,7 @@ import {
   isSystemPage,
   toPageId,
   updateFrontmatter,
+  ensureFrontmatterType,
   type WikiPage,
   type PendingStub,
 } from '../core/vault';
@@ -20,6 +21,7 @@ import { extractWikilinks, linkTargetAliases, pageAliases } from '../core/wikili
 import { extractKeywords } from '../core/keywords';
 import { buildWikiContext } from '../core/wiki-context';
 import { requireRootPrefix, toScopedRelativePath } from '../core/pathSafety';
+import { diffShrink, isLegitimateShrink } from '../core/wiki-additive-guard';
 import { INGEST_PROMPT } from '../core/prompts/index';
 import { buildBrandContextBlock } from '../services/brand.service';
 import { checkAndRegenerateOutputs } from './output.ipc';
@@ -460,10 +462,26 @@ ${rawContent}`;
             try {
               const safePath = requireRootPrefix(op.path, 'wiki');
               const normalized = normalizeOperationTags(op.content, configuredTags);
-              op.content = normalized.content;
+              op.content = ensureFrontmatterType(normalized.content, safePath);
               if (normalized.warning) {
                 sendProgress(file, 'warning', `Tag-Pruefung fuer ${safePath}: ${normalized.warning}`);
               }
+
+              // Additiver Schrumpf-Schutz: ein update darf nicht still Inhalt loeschen.
+              if (op.action === 'update' && !isLegitimateShrink(op.content)) {
+                let oldContent: string | null = pageCacheByRelative.get(safePath)?.content ?? null;
+                if (oldContent === null) {
+                  try { oldContent = (await vault.readWikiPage(safePath)).content; } catch { oldContent = null; }
+                }
+                if (oldContent) {
+                  const report = diffShrink(oldContent, op.content);
+                  if (report.shrunk) {
+                    op.content = updateFrontmatter(op.content, (fm) => { fm.reviewed = false; }) ?? op.content;
+                    sendProgress(file, 'warning', `Schrumpf-Schutz fuer ${safePath}: ${report.reasons.join(', ')} — als ungeprueft markiert.`);
+                  }
+                }
+              }
+
               await vault.writeFile(safePath, op.content);
 
               const wikiRelative = toPageId(safePath);

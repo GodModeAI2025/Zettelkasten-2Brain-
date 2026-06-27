@@ -10,6 +10,8 @@ import { registerForgetHandlers } from './forget.ipc';
 import { registerOutputHandlers } from './output.ipc';
 import { registerTakeawayHandlers } from './takeaway.ipc';
 import { registerBrandHandlers } from './brand.ipc';
+import { registerExportHandlers } from './export.ipc';
+import { registerWebHandlers } from './web.ipc';
 
 export function registerAllIpcHandlers(): void {
   registerSettingsHandlers();
@@ -24,4 +26,6 @@ export function registerAllIpcHandlers(): void {
   registerOutputHandlers();
   registerTakeawayHandlers();
   registerBrandHandlers();
+  registerExportHandlers();
+  registerWebHandlers();
 }

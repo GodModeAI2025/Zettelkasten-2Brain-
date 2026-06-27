@@ -39,6 +39,33 @@ export function IngestPage() {
   const [pendingStubs, setPendingStubs] = useState<PendingStub[]>([]);
   const [creatingStub, setCreatingStub] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [seedUrls, setSeedUrls] = useState('');
+  const [webBusy, setWebBusy] = useState(false);
+
+  const handleWebEnrich = useCallback(async () => {
+    if (!activeProject) return;
+    const urls = seedUrls.split('\n').map((u) => u.trim()).filter(Boolean);
+    if (urls.length === 0) return;
+    setWebBusy(true);
+    try {
+      const res = await api.web.enrich(activeProject, { seedUrls: urls });
+      if (res.error) {
+        addNotification('error', `Web-Anreicherung: ${res.error}`);
+      } else {
+        addNotification(
+          'success',
+          `Web-Anreicherung: ${res.created ?? 0} neu, ${res.updated ?? 0} aktualisiert (${res.pagesFetched ?? 0} Seiten geladen).`,
+        );
+        setSeedUrls('');
+        await refreshWikiPages();
+        await refreshStatus();
+      }
+    } catch (err) {
+      addNotification('error', err instanceof Error ? err.message : String(err));
+    } finally {
+      setWebBusy(false);
+    }
+  }, [activeProject, seedUrls, addNotification, refreshWikiPages, refreshStatus]);
 
   const loadFiles = useCallback(async () => {
     if (!activeProject) return;
@@ -179,6 +206,27 @@ export function IngestPage() {
           )}
         </p>
       </div>
+
+      {/* Web-Anreicherung — Seed-URLs crawlen (Budget/SSRF serverseitig erzwungen) */}
+      {phase === 'idle' && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3>Aus dem Web anreichern</h3>
+          <p style={{ opacity: 0.7, fontSize: 13, margin: '4px 0 10px' }}>
+            Seed-URLs (eine pro Zeile). Die KI crawlt gebudgetiert nur diese Domains und baut daraus Wiki-Seiten.
+          </p>
+          <textarea
+            value={seedUrls}
+            onChange={(e) => setSeedUrls(e.target.value)}
+            placeholder="https://example.com/doku&#10;https://example.com/api"
+            rows={3}
+            disabled={webBusy}
+            style={{ width: '100%', fontFamily: 'monospace', fontSize: 13, marginBottom: 8 }}
+          />
+          <button className="btn btn-primary btn-sm" onClick={handleWebEnrich} disabled={webBusy || !seedUrls.trim()}>
+            {webBusy ? 'Crawle & verarbeite…' : 'Anreichern'}
+          </button>
+        </div>
+      )}
 
       {/* Dateiauswahl — nur sichtbar wenn idle */}
       {phase === 'idle' && (

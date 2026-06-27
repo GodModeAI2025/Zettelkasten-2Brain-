@@ -1,14 +1,8 @@
 import type { WikiCreatePageInput } from '../../shared/api.types';
-import { slugify, today } from './vault';
+import { slugify, today, WIKI_CATEGORY_TYPES } from './vault';
 
-const CATEGORY_TYPES: Record<string, string> = {
-  sources: 'source',
-  entities: 'entity',
-  concepts: 'concept',
-  syntheses: 'synthesis',
-  sops: 'sop',
-  decisions: 'decision',
-};
+// Single Source of Truth fuer das type-Vokabular liegt in vault.ts.
+const CATEGORY_TYPES: Record<string, string> = WIKI_CATEGORY_TYPES;
 
 const DEFAULT_CATEGORY = 'concepts';
 

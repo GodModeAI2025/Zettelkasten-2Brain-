@@ -5,7 +5,7 @@ import { ask, askForJson } from '../core/claude';
 import { buildWikiContext } from '../core/wiki-context';
 import { bm25RankWithIndex } from '../core/search';
 import { extractKeywords } from '../core/keywords';
-import { today, toPageId, isSystemPage } from '../core/vault';
+import { today, toPageId, isSystemPage, ensureFrontmatterType } from '../core/vault';
 import { requireRootPrefix } from '../core/pathSafety';
 import { TAKEAWAY_DISCUSS_PROMPT, TAKEAWAY_SYNTHESIZE_PROMPT } from '../core/prompts/index';
 import { buildBrandContextBlock } from '../services/brand.service';
@@ -140,7 +140,7 @@ Fasse die Erkenntnisse aus der Diskussion zu einer Synthese-Seite unter \`wiki/s
     }
 
     const safePath = requireRootPrefix(result.path, 'wiki/syntheses');
-    await vault.writeFile(safePath, result.content);
+    await vault.writeFile(safePath, ensureFrontmatterType(result.content, safePath));
     await vault.appendLog(
       `\n## [${today()}] synthesis | ${safePath}\nSynthese aus Takeaway erstellt: ${result.title}\n`
     );

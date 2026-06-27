@@ -49,6 +49,54 @@ describe('serializeFrontmatter', () => {
     const out = serializeFrontmatter({ a: 1, b: undefined, c: null });
     expect(out).toBe('---\na: 1\nc:\n---\n');
   });
+
+  it('quotet Werte mit Doppelpunkt (sonst ungueltiges YAML)', () => {
+    const out = serializeFrontmatter({ title: 'Foo: Bar' });
+    expect(out).toBe('---\ntitle: "Foo: Bar"\n---\n');
+  });
+
+  it('quotet fuehrende YAML-Indikatorzeichen und Hash', () => {
+    expect(serializeFrontmatter({ d: '[Entwurf] Notiz' })).toContain('d: "[Entwurf] Notiz"');
+    expect(serializeFrontmatter({ d: 'a # b' })).toContain('d: "a # b"');
+    expect(serializeFrontmatter({ d: 'true' })).toContain('d: "true"');
+  });
+
+  it('laesst harmlose Werte (Slugs, Daten, URLs) ungequotet', () => {
+    expect(serializeFrontmatter({ created: '2026-06-26' })).toContain('created: 2026-06-26');
+    expect(serializeFrontmatter({ resource: 'https://example.com/a?b=1' }))
+      .toContain('resource: https://example.com/a?b=1');
+    expect(serializeFrontmatter({ status: 'seed' })).toContain('status: seed');
+  });
+
+  it('laesst Wikilink-Werte im Live-Vault nativ (unquoted [[X]])', () => {
+    expect(serializeFrontmatter({ superseded_by: '[[neu]]' })).toContain('superseded_by: [[neu]]');
+  });
+});
+
+describe('serialize/parse round-trip (YAML-Haertung)', () => {
+  const cases: Array<[string, unknown]> = [
+    ['title', 'Foo: Bar'],
+    ['description', '[Entwurf] mit # Hash und : Doppelpunkt'],
+    ['resource', 'https://example.com/path?x=1&y=2'],
+    ['superseded_by', '[[neuere-seite]]'],
+    ['created', '2026-06-26'],
+    ['status', 'seed'],
+  ];
+
+  for (const [key, value] of cases) {
+    it(`roundtrip: ${key} = ${JSON.stringify(value)}`, () => {
+      const serialized = serializeFrontmatter({ [key]: value });
+      const { data } = parseFrontmatterBlock(serialized + 'Body\n');
+      expect(data[key]).toEqual(value);
+    });
+  }
+
+  it('roundtrip behaelt Arrays', () => {
+    const serialized = serializeFrontmatter({ tags: ['topic/a', 'type/source'], sources: ['x.md'] });
+    const { data } = parseFrontmatterBlock(serialized);
+    expect(data.tags).toEqual(['topic/a', 'type/source']);
+    expect(data.sources).toEqual(['x.md']);
+  });
 });
 
 describe('updateFrontmatter', () => {

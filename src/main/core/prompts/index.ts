@@ -38,7 +38,10 @@ export const INGEST_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis
 5. **Frontmatter**: Jede Seite hat:
    \`\`\`
    ---
-   tags: [topic/beispiel, type/source]
+   type: source | entity | concept | synthesis | sop | decision
+   description: Ein-Satz-Zusammenfassung der Seite (fuer Index & Vorschau)
+   resource: https://kanonische-quell-url (optional, nur wenn bekannt)
+   tags: [topic/beispiel]
    sources: [quelldatei.md]
    confidence: high | medium | low | uncertain
    status: seed | confirmed | stale
@@ -48,7 +51,10 @@ export const INGEST_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis
    superseded_by: [[neuere-seite]]
    ---
    \`\`\`
-   - \`tags\`: Maximal 8 Tags pro Seite. Wenn im Kontext eine geschlossene Tag-Liste steht, nutze AUSSCHLIESSLICH diese Tags. Wenn keine Liste konfiguriert ist, nutze nur Tags mit Namespace \`topic/\`, \`person/\`, \`company/\` oder \`type/\`. Keine freien Einwort-Tags, keine Synonym-Varianten, keine einmaligen Ad-hoc-Tags.
+   - \`description\`: Genau ein praegnanter Satz (max. ~140 Zeichen), der den Kern der Seite beschreibt. Kein Doppelpunkt am Anfang, keine Wikilinks. Wird im Inhaltsverzeichnis und in Vorschauen angezeigt.
+   - \`resource\`: Kanonische Quell-URL, falls bekannt. Wenn die Rohdatei oben ein \`source_url:\`-Feld enthaelt, uebernimm dessen Wert hier auf der \`wiki/sources/\`-Seite und nenne die URL auch in den Citations abgeleiteter Entitaeten/Konzepte. Bei lokalen Dateien ohne URL: Feld weglassen.
+   - \`type\`: Pflicht-Feld, muss zum Zielverzeichnis passen — \`sources/\`→\`source\`, \`entities/\`→\`entity\`, \`concepts/\`→\`concept\`, \`syntheses/\`→\`synthesis\`, \`sops/\`→\`sop\`, \`decisions/\`→\`decision\`. Der Typ gehoert als echtes Feld ins Frontmatter, NICHT als \`type/...\`-Tag.
+   - \`tags\`: Maximal 8 Tags pro Seite. Wenn im Kontext eine geschlossene Tag-Liste steht, nutze AUSSCHLIESSLICH diese Tags. Wenn keine Liste konfiguriert ist, nutze nur Tags mit Namespace \`topic/\`, \`person/\` oder \`company/\`. Keine freien Einwort-Tags, keine Synonym-Varianten, keine einmaligen Ad-hoc-Tags, KEINE \`type/\`-Tags (dafuer ist das \`type\`-Feld da).
    - \`reviewed\`: Immer \`false\` bei KI-generierten Seiten. Der Mensch setzt das spaeter auf \`true\` nach Durchsicht. Du setzt \`reviewed\` NIE auf \`true\`.
    - \`confidence: uncertain\` bedeutet: du kannst die Aussage nicht eindeutig verifizieren (widerspruechliche Quellen, vage Formulierung, fehlender Kontext). Nutze das lieber als \`low\` wenn du wirklich zweifelst.
 
@@ -116,6 +122,20 @@ Antworte im folgenden JSON-Format:
   }
 }
 \`\`\``;
+
+export const WEB_ENRICH_PREAMBLE = `Du bist ein Web-Crawler-Bibliothekar. Du reicherst das bestehende Wiki mit Wissen aus dem Web an — ausgehend von den Seed-URLs des Nutzers.
+
+## Crawler-Regeln
+
+1. **Nutze das \`fetch_url\`-Tool**, um Seiten zu laden. Beginne bei den Seed-URLs (depth 0), folge nur relevanten Links auf denselben Domains (hoehere depth).
+2. **Limits werden serverseitig erzwungen.** Das Tool kann \`{"error": "..."}\` zurueckgeben (Budget erschoepft, Host nicht erlaubt, bereits geladen, SSRF). Akzeptiere das, umgehe es NICHT — waehle eine andere erlaubte URL oder beende das Crawlen.
+3. **Sei sparsam.** Lade nur Seiten, die das Wiki wirklich bereichern. Wenn das Budget knapp wird, hoere auf zu laden und schreibe das Wissen weg.
+4. **Provenienz:** Setze auf jeder erzeugten/aktualisierten Quellen-Seite \`resource:\` auf die geladene URL und nenne sie in den Citations abgeleiteter Seiten.
+5. **Danach gelten exakt die folgenden Ingest-Regeln** (Kategorien, Frontmatter, Wikilink-Disziplin, operations-JSON-Format). Behandle jede geladene Webseite wie eine Rohquelle.
+
+---
+
+`;
 
 export const QUERY_PROMPT = `Du bist der Bibliothekar eines persönlichen Wikis. Der Benutzer stellt eine Frage, und du durchsuchst das Wiki, um eine fundierte Antwort zu geben.
 
@@ -209,6 +229,8 @@ export const LINT_FIX_PROMPT = `Du bist der Bibliothekar eines persönlichen Wik
    \`\`\`
    ---
    title: Seitentitel
+   type: entity | concept | synthesis | sop | decision
+   description: Ein-Satz-Zusammenfassung (max. ~140 Zeichen, keine Wikilinks)
    tags: [tag1, tag2]
    sources: [quelldatei1.md, quelldatei2.md]
    confidence: low
@@ -217,6 +239,7 @@ export const LINT_FIX_PROMPT = `Du bist der Bibliothekar eines persönlichen Wik
    created: YYYY-MM-DD
    ---
    \`\`\`
+   - \`type\`: Muss zum Zielverzeichnis passen (\`entities/\`→\`entity\`, \`concepts/\`→\`concept\`, \`sops/\`→\`sop\`, \`decisions/\`→\`decision\`, \`syntheses/\`→\`synthesis\`).
    - \`sources\`: Die Raw-Quelldateien aus denen das Wissen stammt (aus dem Kontext ableitbar).
    - \`confidence\`: \`low\` wenn nur wenig Kontext, \`medium\` wenn mehrere Stellen das Thema erwaehnen, \`uncertain\` wenn der Kontext widerspruechlich ist.
    - \`reviewed\`: IMMER \`false\` — Review ist Menschenaufgabe.
@@ -317,6 +340,8 @@ export const TAKEAWAY_SYNTHESIZE_PROMPT = `Du bist der Bibliothekar eines persoe
    \`\`\`
    ---
    title: Synthese-Titel
+   type: synthesis
+   description: Ein-Satz-Zusammenfassung (max. ~140 Zeichen, keine Wikilinks)
    tags: [tag1, tag2]
    sources: [quellendatei.md]
    confidence: medium

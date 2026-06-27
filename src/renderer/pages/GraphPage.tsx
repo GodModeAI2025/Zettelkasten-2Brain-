@@ -192,6 +192,8 @@ export function GraphPage() {
   const [activeGroups, setActiveGroups] = useState<Set<string>>(new Set());
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [linkDistance, setLinkDistance] = useState(30);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(undefined);
@@ -240,6 +242,59 @@ export function GraphPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+    }
+  }, [activeProject]);
+
+  const handleExportHtml = useCallback(async () => {
+    if (!activeProject || !hasApi) return;
+    setExportBusy(true);
+    setExportMsg(null);
+    try {
+      const res = await api.okf.exportHtml(activeProject);
+      setExportMsg(res.canceled ? 'Export abgebrochen.' : `HTML-Graph gespeichert (${res.pageCount} Seiten).`);
+    } catch (err) {
+      setExportMsg(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  }, [activeProject]);
+
+  const handleImportBundle = useCallback(async () => {
+    if (!activeProject || !hasApi) return;
+    setExportBusy(true);
+    setExportMsg(null);
+    try {
+      const res = await api.okf.import(activeProject);
+      if (res.canceled) {
+        setExportMsg('Import abgebrochen.');
+      } else {
+        const sk = res.skipped?.length ? `, ${res.skipped.length} uebersprungen` : '';
+        setExportMsg(`Bundle importiert: ${res.imported} Seite(n)${sk} — in Review-Queue.`);
+        await loadGraph();
+      }
+    } catch (err) {
+      setExportMsg(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportBusy(false);
+    }
+  }, [activeProject, loadGraph]);
+
+  const handleExportOkf = useCallback(async () => {
+    if (!activeProject || !hasApi) return;
+    setExportBusy(true);
+    setExportMsg(null);
+    try {
+      const res = await api.okf.export(activeProject, { zip: true });
+      if (res.canceled) {
+        setExportMsg('Export abgebrochen.');
+      } else {
+        const warn = res.unresolvedCount ? ` (${res.unresolvedCount} unaufgeloeste Links)` : '';
+        setExportMsg(`OKF-Bundle exportiert: ${res.pageCount} Seiten${warn}.`);
+      }
+    } catch (err) {
+      setExportMsg(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportBusy(false);
     }
   }, [activeProject]);
 
@@ -555,6 +610,20 @@ export function GraphPage() {
       )}
 
       <div className="graph-container-full" ref={containerRef}>
+        {/* Export-Aktionen: portables OKF-Bundle + eigenstaendiger HTML-Graph */}
+        <div className="graph-export-toolbar" style={{ position: 'absolute', top: 12, right: 12, zIndex: 6, display: 'flex', gap: 8, alignItems: 'center' }}>
+          {exportMsg && <span className="graph-export-msg" style={{ fontSize: 12, opacity: 0.8 }}>{exportMsg}</span>}
+          <button className="btn btn-secondary btn-sm" onClick={handleExportHtml} disabled={exportBusy} title="Eigenstaendige HTML-Datei mit interaktivem Graphen">
+            {exportBusy ? '…' : 'Als HTML'}
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={handleExportOkf} disabled={exportBusy} title="Portables OKF-Bundle (Markdown + relative Links, gezippt)">
+            {exportBusy ? '…' : 'Als OKF-Bundle'}
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={handleImportBundle} disabled={exportBusy} title="Strukturiertes Markdown-Bundle direkt importieren (ohne KI), Seiten landen in der Review-Queue">
+            {exportBusy ? '…' : 'Bundle importieren'}
+          </button>
+        </div>
+
         {/* Dynamische Legende — gruppiert nach Häufigkeit, max 2 Spalten */}
         <div className="graph-legend">
           <div className="graph-legend-grid">

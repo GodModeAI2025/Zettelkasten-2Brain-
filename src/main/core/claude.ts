@@ -305,6 +305,78 @@ export async function ask(opts: {
   }
 }
 
+export type ToolDefinition = Anthropic.Tool;
+export type ToolHandler = (name: string, input: unknown) => Promise<string>;
+
+/**
+ * Agentic Tool-Loop (tool_use/tool_result-Zyklus) fuer die Web-Enrichment-
+ * Ingestion (L-1). Der `handler` fuehrt Tools aus — Budget/Scope werden im Tool
+ * (web-fetch.ts) erzwungen, NIE dem Modell anvertraut. `maxToolTurns` ist der
+ * harte Loop-Backstop.
+ */
+export async function askWithTools(opts: {
+  system: string;
+  prompt: string;
+  tools: ToolDefinition[];
+  handler: ToolHandler;
+  model?: string;
+  maxTokens?: number;
+  maxToolTurns?: number;
+  signal?: AbortSignal;
+}): Promise<AskResult> {
+  const anthropic = getClient();
+  const model = opts.model || SettingsService.getModel();
+  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: opts.prompt }];
+  const maxTurns = opts.maxToolTurns ?? 12;
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  for (let turn = 0; turn < maxTurns; turn++) {
+    throwIfAborted(opts.signal);
+    const response = await anthropic.messages.create(
+      {
+        model,
+        max_tokens: clampMaxTokens(opts.maxTokens, model),
+        system: opts.system,
+        tools: opts.tools,
+        messages,
+      },
+      opts.signal ? { signal: opts.signal } : undefined,
+    );
+    inputTokens += response.usage.input_tokens;
+    outputTokens += response.usage.output_tokens;
+    messages.push({ role: 'assistant', content: response.content });
+
+    if (response.stop_reason === 'tool_use') {
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of response.content) {
+        if (block.type === 'tool_use') {
+          let resultText: string;
+          try {
+            resultText = await opts.handler(block.name, block.input);
+          } catch (err) {
+            resultText = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+          }
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: resultText });
+        }
+      }
+      messages.push({ role: 'user', content: toolResults });
+      continue;
+    }
+
+    const textBlock = response.content.find((b) => b.type === 'text');
+    const usage: TokenUsage = { inputTokens, outputTokens };
+    return {
+      text: textBlock && textBlock.type === 'text' ? textBlock.text : '',
+      usage,
+      truncated: response.stop_reason === 'max_tokens',
+      model,
+      costUsd: estimateClaudeCostUsd(model, usage),
+    };
+  }
+  throw new Error('askWithTools: maximale Tool-Runden erreicht.');
+}
+
 export interface AskJsonResult<T> {
   result: T | null;
   response: AskResult;

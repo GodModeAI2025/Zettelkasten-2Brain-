@@ -72,6 +72,12 @@ export function applyWikiFrontmatterPatch(
   if ('type' in patch) {
     setOptionalStringField(frontmatter, changed, 'type', patch.type);
   }
+  if ('description' in patch) {
+    setOptionalStringField(frontmatter, changed, 'description', patch.description);
+  }
+  if ('resource' in patch) {
+    setOptionalStringField(frontmatter, changed, 'resource', patch.resource);
+  }
   if ('superseded_by' in patch) {
     setOptionalStringField(frontmatter, changed, 'superseded_by', patch.superseded_by);
   }

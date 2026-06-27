@@ -3,7 +3,7 @@ import { basename } from 'path';
 import { ProjectService } from '../services/project.service';
 import { loadConfig } from '../core/config';
 import { askForJson } from '../core/claude';
-import { isSystemPage } from '../core/vault';
+import { isSystemPage, resolvePageType } from '../core/vault';
 
 type TaxonomyField = 'entityTypes' | 'conceptTypes' | 'tags';
 
@@ -54,7 +54,7 @@ export function registerProjectHandlers(): void {
       .slice(0, 40)
       .map((p) => {
         const tags = Array.isArray(p.frontmatter.tags) ? (p.frontmatter.tags as string[]).join(', ') : '';
-        const type = p.frontmatter.type || '';
+        const type = resolvePageType(p.frontmatter) || '';
         return `- ${p.relativePath} (type: ${type}, tags: ${tags})`;
       })
       .join('\n');

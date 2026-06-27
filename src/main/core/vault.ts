@@ -338,6 +338,24 @@ export function parseFrontmatterBlock(content: string): FrontmatterBlock {
   return { data, body, hasFrontmatter: true };
 }
 
+function stripQuotes(raw: string): string {
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    // Doppelte Anfuehrungszeichen: JSON-kompatibel entescapen (\" \\ \n \t ...).
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === 'string') return parsed;
+    } catch {
+      /* faellt unten auf naives Slicing zurueck */
+    }
+    return raw.slice(1, -1);
+  }
+  if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
+    // Einfache Anfuehrungszeichen: YAML-Escaping ist die verdoppelte Quote.
+    return raw.slice(1, -1).replace(/''/g, "'");
+  }
+  return raw;
+}
+
 function parseFrontmatterValue(raw: string): unknown {
   if (raw === '' || raw === '~' || raw === 'null') return null;
   // Wikilink vor Array-Check: `superseded_by: [[X]]` darf NICHT als Array geparst werden.
@@ -345,14 +363,47 @@ function parseFrontmatterValue(raw: string): unknown {
   if (raw.startsWith('[') && raw.endsWith(']')) {
     const inner = raw.slice(1, -1).trim();
     if (inner === '') return [];
-    return inner.split(',').map((s) => s.trim());
+    return inner.split(',').map((s) => stripQuotes(s.trim()));
   }
   if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
-    return raw.slice(1, -1);
+    return stripQuotes(raw);
   }
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   return raw;
+}
+
+// YAML-Skalare, die ungequotet als Keyword/Sonderwert fehlinterpretiert wuerden.
+const YAML_RESERVED_SCALARS = new Set([
+  'true', 'false', 'null', '~', 'yes', 'no', 'on', 'off',
+  'True', 'False', 'Null', 'Yes', 'No', 'On', 'Off',
+  'TRUE', 'FALSE', 'NULL', 'YES', 'NO', 'ON', 'OFF',
+]);
+
+/**
+ * Entscheidet, ob ein String-Skalar fuer standardkonformes YAML gequotet werden
+ * muss. Konservativ: nur quoten, was sonst von einem echten YAML-Parser falsch
+ * gelesen wuerde — damit Diffs minimal bleiben und harmlose Werte (Slugs, Daten,
+ * URLs, Enums) ungequotet bleiben.
+ */
+function needsScalarQuoting(s: string): boolean {
+  if (s === '' || s === '-') return true;
+  if (s !== s.trim()) return true;                 // fuehrender/abschliessender Whitespace
+  if (YAML_RESERVED_SCALARS.has(s)) return true;   // true/false/null/yes/no/...
+  if (/^[-?:]\s/.test(s)) return true;             // "- ", "? ", ": " als Block-Indikator
+  if (/^[[\]{}#&*!|>'"%@`,]/.test(s)) return true; // fuehrendes YAML-Indikatorzeichen
+  if (/:(\s|$)/.test(s)) return true;              // Doppelpunkt + Space/EOL (Mapping-Ambiguitaet)
+  if (/\s#/.test(s)) return true;                  // Space + Hash (Kommentar)
+  if (/[\n\t]/.test(s)) return true;               // Steuer-Whitespace
+  if (/^[+-]?(\d[\d_]*)(\.\d*)?([eE][+-]?\d+)?$/.test(s)) return true; // zahlartig
+  return false;
+}
+
+function formatScalarString(s: string): string {
+  // Wikilinks bleiben im Live-Vault nativ ([[X]]); portiert wird erst beim Export.
+  if (s.startsWith('[[') && s.endsWith(']]')) return s;
+  if (needsScalarQuoting(s)) return JSON.stringify(s);
+  return s;
 }
 
 export function serializeFrontmatter(data: Record<string, unknown>): string {
@@ -362,11 +413,12 @@ export function serializeFrontmatter(data: Record<string, unknown>): string {
     if (value === null) {
       lines.push(`${key}:`);
     } else if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.join(', ')}]`);
-    } else if (typeof value === 'boolean') {
+      const items = value.map((v) => formatScalarString(String(v)));
+      lines.push(`${key}: [${items.join(', ')}]`);
+    } else if (typeof value === 'boolean' || typeof value === 'number') {
       lines.push(`${key}: ${value}`);
     } else {
-      lines.push(`${key}: ${value}`);
+      lines.push(`${key}: ${formatScalarString(String(value))}`);
     }
   }
   lines.push('---');
@@ -399,6 +451,61 @@ function buildWikiPage(absolutePath: string, relativePath: string, content: stri
 
 export const WIKI_CATEGORIES = ['sources', 'entities', 'concepts', 'syntheses', 'sops', 'decisions'] as const;
 export type WikiCategory = (typeof WIKI_CATEGORIES)[number];
+
+/** Kanonisches `type:`-Vokabular pro Verzeichnis — Single Source of Truth fuer den Seitentyp. */
+export const WIKI_CATEGORY_TYPES: Record<WikiCategory, string> = {
+  sources: 'source',
+  entities: 'entity',
+  concepts: 'concept',
+  syntheses: 'synthesis',
+  sops: 'sop',
+  decisions: 'decision',
+};
+
+export function typeForCategory(category: string): string | undefined {
+  return (WIKI_CATEGORY_TYPES as Record<string, string>)[category];
+}
+
+/** Leitet die Wiki-Kategorie aus einem (ggf. `wiki/`-praefixierten) Pfad ab. */
+export function categoryFromWikiPath(path: string): WikiCategory | undefined {
+  const norm = path.replace(/\\/g, '/').replace(/^wiki\//, '');
+  const first = norm.split('/')[0];
+  return (WIKI_CATEGORIES as readonly string[]).includes(first) ? (first as WikiCategory) : undefined;
+}
+
+/**
+ * Liest den kanonischen Seitentyp: echtes `type:`-Feld bevorzugt, sonst
+ * Back-Compat aus einem `type/<x>`-Tag (alte KI-Seiten), sonst undefined.
+ */
+export function resolvePageType(frontmatter: Record<string, unknown>): string | undefined {
+  const direct = frontmatter.type;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const tags = frontmatter.tags;
+  if (Array.isArray(tags)) {
+    for (const t of tags) {
+      const s = String(t).trim();
+      if (s.toLowerCase().startsWith('type/') && s.length > 'type/'.length) {
+        return s.slice('type/'.length);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Deterministischer Backfill: ergaenzt ein fehlendes `type:`-Feld anhand des
+ * Verzeichnisses, damit der Seitentyp nicht von der KI-Compliance abhaengt.
+ */
+export function ensureFrontmatterType(content: string, wikiPath: string): string {
+  const category = categoryFromWikiPath(wikiPath);
+  if (!category) return content;
+  const type = WIKI_CATEGORY_TYPES[category];
+  const updated = updateFrontmatter(content, (fm) => {
+    const current = typeof fm.type === 'string' ? fm.type.trim() : '';
+    if (!current) fm.type = type;
+  });
+  return updated ?? content;
+}
 
 export const WIKI_SUB_INDEXES: Record<WikiCategory, string> = {
   sources: '# Quellen\n\nZusammenfassungen der Rohdaten.\n',
@@ -449,12 +556,85 @@ function indexHasPage(indexAliases: Set<string>, pageId: string, pageName: strin
   return pageAliases(pageId, pageName).some((a) => indexAliases.has(a));
 }
 
+// Sentinel-Marker: alles INNERHALB wird voll regeneriert, alles ausserhalb
+// (handgeschriebene Praeambel) bleibt erhalten — Progressive-Disclosure-TOC nach OKF-Vorbild.
+const AUTO_INDEX_START = '<!-- auto-index -->';
+const AUTO_INDEX_END = '<!-- /auto-index -->';
+
+export const WIKI_CATEGORY_LABELS: Record<WikiCategory, string> = {
+  sources: 'Quellen',
+  entities: 'Entitaeten',
+  concepts: 'Konzepte',
+  syntheses: 'Synthesen',
+  sops: 'SOPs',
+  decisions: 'Entscheidungen',
+};
+
+// Boilerplate-Abschnitte, die NICHT als Kurzbeschreibung taugen.
+const INDEX_BOILERPLATE_HEADINGS = [
+  'gegenargument', 'datenlueck', 'datenlück', 'arbeitsnotiz', 'kontext', 'quellen', 'citations', 'einwaende', 'einwände',
+];
+
+function truncateText(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 1).trimEnd() + '…';
+}
+
+/** Kurzbeschreibung fuer Index-Eintraege: `description`-Feld bevorzugt, sonst erster Fliesstext-Satz. */
+export function deriveDescription(content: string, maxLen = 140): string {
+  const { data, body } = parseFrontmatterBlock(content);
+  const sanitize = (s: string) => s.replace(/\[\[|\]\]/g, '').replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
+
+  const fd = data.description;
+  if (typeof fd === 'string' && fd.trim()) return truncateText(sanitize(fd), maxLen);
+
+  let skipping = false;
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('#')) {
+      const h = line.replace(/^#+\s*/, '').toLowerCase();
+      skipping = INDEX_BOILERPLATE_HEADINGS.some((b) => h.startsWith(b));
+      continue;
+    }
+    if (skipping) continue;
+    if (/^[-*>|]/.test(line) || line.startsWith('```')) continue;
+    const sentence = line.split(/(?<=[.!?])\s/)[0];
+    return truncateText(sanitize(sentence), maxLen);
+  }
+  return '';
+}
+
+/** Trennt die handgeschriebene Praeambel vom (neu zu generierenden) Auto-Block. */
+function extractIndexPreamble(content: string): string {
+  const sentIdx = content.indexOf(AUTO_INDEX_START);
+  if (sentIdx !== -1) return content.slice(0, sentIdx).trimEnd();
+  const lines = content.split('\n');
+  let cut = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (/^[-*]\s*\[\[/.test(l) || /^##\s/.test(l)) { cut = i; break; }
+  }
+  return lines.slice(0, cut).join('\n').trimEnd();
+}
+
+function indexBullet(name: string, description: string): string {
+  const label = name.replace(/-/g, ' ');
+  return description ? `- [[${label}]] — ${description}` : `- [[${label}]]`;
+}
+
+function composeAutoIndex(preamble: string, block: string): string {
+  const body = block.trim() ? `${AUTO_INDEX_START}\n${block}\n${AUTO_INDEX_END}\n` : `${AUTO_INDEX_START}\n${AUTO_INDEX_END}\n`;
+  return preamble.trim() ? `${preamble.trimEnd()}\n\n${body}` : body;
+}
+
+interface IndexPage { id: string; name: string; description: string }
+
 export async function updateIndexes(wikiDir: string): Promise<number> {
   const files = await glob('**/*.md', { cwd: wikiDir, nodir: true });
-  let addedCount = 0;
 
-  const pagesByDir = new Map<string, Array<{ id: string; name: string }>>();
-  const allPages: Array<{ id: string; name: string }> = [];
+  const pagesByDir = new Map<string, IndexPage[]>();
+  const allPages: Array<IndexPage & { topDir: string }> = [];
 
   for (const file of files) {
     const name = basename(file, '.md');
@@ -462,61 +642,73 @@ export async function updateIndexes(wikiDir: string): Promise<number> {
     const dir = dirname(file);
     if (dir === '.') continue;
     const id = file.replace(/\.md$/, '');
+    let description = '';
+    try {
+      description = deriveDescription(await readFile(join(wikiDir, file), 'utf-8'));
+    } catch {
+      /* unlesbar — ohne Beschreibung indizieren */
+    }
+    const page: IndexPage = { id, name, description };
     const list = pagesByDir.get(dir) || [];
-    list.push({ id, name });
+    list.push(page);
     pagesByDir.set(dir, list);
-    allPages.push({ id, name });
+    allPages.push({ ...page, topDir: id.includes('/') ? id.split('/')[0] : 'other' });
   }
 
+  let addedCount = 0;
+
+  // Sub-Index pro Verzeichnis: Praeambel erhalten, Auto-Block sortiert voll regenerieren.
   for (const [dir, pages] of pagesByDir) {
     const indexPath = join(wikiDir, dir, 'index.md');
-    let indexContent: string;
-    try {
-      indexContent = await readFile(indexPath, 'utf-8');
-    } catch {
-      continue;
-    }
+    let existing = '';
+    try { existing = await readFile(indexPath, 'utf-8'); } catch { /* wird neu angelegt */ }
 
-    const indexAliases = collectIndexAliases(indexContent);
-    const missing = pages.filter((p) => !indexHasPage(indexAliases, p.id, p.name));
+    // Zaehle nur Seiten, die vorher noch nicht im Index standen (fuer die Lint-Meldung).
+    const oldAliases = collectIndexAliases(existing);
+    addedCount += pages.filter((p) => !indexHasPage(oldAliases, p.id, p.name)).length;
 
-    if (missing.length > 0) {
-      const entries = missing
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((p) => `- [[${p.name.replace(/-/g, ' ')}]]`)
-        .join('\n');
-      indexContent = indexContent.trimEnd() + '\n' + entries + '\n';
-      await writeFile(indexPath, indexContent, 'utf-8');
-      addedCount += missing.length;
-    }
+    const category = dir as WikiCategory;
+    const fallbackHeader = (WIKI_SUB_INDEXES[category] ?? `# ${dir}\n`).trimEnd();
+    const preamble = existing.trim() ? extractIndexPreamble(existing) : fallbackHeader;
+
+    const block = pages
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((p) => indexBullet(p.name, p.description))
+      .join('\n');
+
+    await mkdir(join(wikiDir, dir), { recursive: true });
+    await writeFile(indexPath, composeAutoIndex(preamble, block), 'utf-8');
   }
 
+  // Hauptindex: Intro erhalten, nach Kategorien gruppierten Auto-Block regenerieren.
   const mainIndexPath = join(wikiDir, 'index.md');
   try {
-    let mainIndex = await readFile(mainIndexPath, 'utf-8');
-    const mainIndexAliases = collectIndexAliases(mainIndex);
-    const missingFromMain = allPages.filter((e) => !indexHasPage(mainIndexAliases, e.id, e.name));
+    const existingMain = await readFile(mainIndexPath, 'utf-8');
+    const preamble = extractIndexPreamble(existingMain);
 
-    if (missingFromMain.length > 0) {
-      const grouped = new Map<string, string[]>();
-      for (const entry of missingFromMain) {
-        const dir = entry.id.includes('/') ? entry.id.split('/')[0] : 'other';
-        const list = grouped.get(dir) || [];
-        list.push(entry.name);
-        grouped.set(dir, list);
-      }
-
-      let section = '';
-      for (const [dir, names] of grouped) {
-        section += `\n## ${dir}\n`;
-        for (const n of names.sort()) {
-          section += `- [[${n.replace(/-/g, ' ')}]]\n`;
-        }
-      }
-      mainIndex = mainIndex.trimEnd() + '\n' + section;
-      await writeFile(mainIndexPath, mainIndex, 'utf-8');
-      addedCount += missingFromMain.length;
+    const grouped = new Map<string, IndexPage[]>();
+    for (const entry of allPages) {
+      const list = grouped.get(entry.topDir) || [];
+      list.push(entry);
+      grouped.set(entry.topDir, list);
     }
+
+    const order: string[] = [...WIKI_CATEGORIES, 'other'];
+    const sections: string[] = [];
+    for (const cat of order) {
+      const pages = grouped.get(cat);
+      if (!pages || pages.length === 0) continue;
+      const label = WIKI_CATEGORY_LABELS[cat as WikiCategory] ?? cat;
+      const bullets = pages
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => indexBullet(p.name, p.description))
+        .join('\n');
+      sections.push(`### ${label}\n${bullets}`);
+    }
+
+    await writeFile(mainIndexPath, composeAutoIndex(preamble, sections.join('\n\n')), 'utf-8');
   } catch {
     /* kein Hauptindex */
   }

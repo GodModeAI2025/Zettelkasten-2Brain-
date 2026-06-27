@@ -450,7 +450,7 @@ export function LintPage() {
           )}
 
           {result.supersededNotStale.length > 0 && (
-            <LintSection title="Ersetzt aber nicht stale" type="error" count={result.supersededNotStale.length}>
+            <LintSection title="Ersetzt aber nicht stale" type="warning" count={result.supersededNotStale.length}>
               {result.supersededNotStale.map((page, i) => (
                 <div key={i} className="lint-item">{page}</div>
               ))}
@@ -458,7 +458,7 @@ export function LintPage() {
           )}
 
           {result.seedWithMultipleSources.length > 0 && (
-            <LintSection title="Seed mit mehreren Quellen" type="error" count={result.seedWithMultipleSources.length}>
+            <LintSection title="Seed mit mehreren Quellen" type="warning" count={result.seedWithMultipleSources.length}>
               {result.seedWithMultipleSources.map((page, i) => (
                 <div key={i} className="lint-item">{page}</div>
               ))}

@@ -80,6 +80,8 @@ export interface WikiFrontmatterPatch {
   status?: string | null;
   confidence?: string | null;
   type?: string | null;
+  description?: string | null;
+  resource?: string | null;
   tags?: string[];
   sources?: string[];
   superseded_by?: string | null;
@@ -232,7 +234,7 @@ export interface UploadProgress {
 export interface GraphNode {
   id: string;
   label: string;
-  group: 'sources' | 'entities' | 'concepts' | 'synthesis' | 'other';
+  group: 'sources' | 'entities' | 'concepts' | 'syntheses' | 'sops' | 'decisions' | 'other';
   tags: string[];
   degree: number;
   hasContent: boolean;
@@ -260,6 +262,28 @@ export interface ScheduleStatus {
   running: boolean;
   lastRunAt: string | null;
   lastRunSummary: string | null;
+}
+
+export interface OkfExportResult {
+  canceled: boolean;
+  bundleDir?: string;
+  zipPath?: string;
+  pageCount?: number;
+  unresolvedCount?: number;
+  collisionCount?: number;
+}
+
+export interface OkfImportResult {
+  canceled: boolean;
+  imported?: number;
+  skipped?: string[];
+}
+
+export interface WebEnrichResult {
+  created?: number;
+  updated?: number;
+  pagesFetched?: number;
+  error?: string;
 }
 
 export interface BridgeApi {
@@ -352,6 +376,14 @@ export interface BridgeApi {
     readPrompt: (proj: string, name: string) => Promise<OutputPrompt>;
     savePrompt: (proj: string, name: string, opts: Record<string, unknown>) => Promise<void>;
     delete: (proj: string, name: string) => Promise<void>;
+  };
+  okf: {
+    export: (proj: string, opts?: { targetDir?: string; zip?: boolean }) => Promise<OkfExportResult>;
+    exportHtml: (proj: string, opts?: { targetPath?: string }) => Promise<OkfExportResult>;
+    import: (proj: string, opts?: { sourceDir?: string }) => Promise<OkfImportResult>;
+  };
+  web: {
+    enrich: (proj: string, opts: { seedUrls: string[]; maxPages?: number }) => Promise<WebEnrichResult>;
   };
   skill: {
     list: (proj: string) => Promise<SkillInfo[]>;

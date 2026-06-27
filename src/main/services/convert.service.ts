@@ -8,6 +8,24 @@ export interface ConvertResult {
   error?: string;
 }
 
+/**
+ * Liest die kanonische Quell-URL aus HTML (`<link rel="canonical">` oder
+ * `og:url`) — Provenienz fuer das spaetere `resource:`-Frontmatter (M-3/OKF).
+ */
+export function extractCanonicalUrl(html: string): string | undefined {
+  const canonical = html.match(/<link\b[^>]*\brel=["']canonical["'][^>]*>/i);
+  if (canonical) {
+    const href = canonical[0].match(/\bhref=["']([^"']+)["']/i);
+    if (href) return href[1].trim();
+  }
+  const og = html.match(/<meta\b[^>]*\bproperty=["']og:url["'][^>]*>/i);
+  if (og) {
+    const content = og[0].match(/\bcontent=["']([^"']+)["']/i);
+    if (content) return content[1].trim();
+  }
+  return undefined;
+}
+
 export const ConvertService = {
   async toMarkdown(filePath: string): Promise<ConvertResult> {
     const ext = path.extname(filePath).toLowerCase();
@@ -61,7 +79,10 @@ export const ConvertService = {
       try {
         const { NodeHtmlMarkdown } = await import('node-html-markdown');
         const content = await readFile(filePath, 'utf-8');
-        const markdown = NodeHtmlMarkdown.translate(content);
+        const url = extractCanonicalUrl(content);
+        const body = NodeHtmlMarkdown.translate(content);
+        // Quell-URL als Frontmatter voranstellen — die KI uebernimmt sie als resource:.
+        const markdown = url ? `---\nsource_url: ${url}\n---\n\n${body}` : body;
         return { markdown, originalName, converted: true };
       } catch (err) {
         return { markdown: '', originalName, converted: false, error: `HTML-Konvertierung fehlgeschlagen: ${err}` };
