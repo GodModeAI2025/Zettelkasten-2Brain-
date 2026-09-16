@@ -18,6 +18,7 @@ import { loadConfig } from '../core/config';
 import { askForJson } from '../core/claude';
 import { bm25RankWithIndex } from '../core/search';
 import { requireRootPrefix } from '../core/pathSafety';
+import { findMissingSourceRefs } from '../core/wiki-source-refs';
 import { LINT_FIX_PROMPT, LINT_SUGGEST_PROMPT } from '../core/prompts/index';
 import { buildBrandContextBlock } from '../services/brand.service';
 import { checkAndRegenerateOutputs } from './output.ipc';
@@ -168,13 +169,19 @@ export function registerLintHandlers(): void {
       }
     }
 
+    // Rueckverfolgbarkeit: sources-Eintraege, deren Rohdatei nicht (mehr) in raw/ liegt
+    const missingSources = findMissingSourceRefs(
+      loadedPages.filter((e) => !isSystemPage(e.name)).map((e) => ({ id: e.id, frontmatter: e.page.frontmatter })),
+      await vault.listRawFiles(),
+    );
+
     // Nur Broken Links sind harte Fehler (actionable, der Auto-Fixer erzeugt fehlende Seiten).
     // Lifecycle-Zustaende (superseded/seed-mit-Quellen) sind Warnungen — der Fixer korrigiert
     // sie ohnehin mechanisch. Streng schreiben, tolerant lesen (Postel's Law / OKF-KonsumModell).
     const errors = brokenLinks.length;
     const warnings =
       orphans.length + indexMissing.length + stalePages.length + uncertainPages.length +
-      supersededNotStale.length + seedWithMultipleSources.length;
+      supersededNotStale.length + seedWithMultipleSources.length + missingSources.length;
 
     return {
       brokenLinks,
@@ -183,6 +190,7 @@ export function registerLintHandlers(): void {
       stalePages,
       supersededNotStale,
       seedWithMultipleSources,
+      missingSources,
       missingTemporalFields,
       unreviewedPages,
       uncertainPages,
