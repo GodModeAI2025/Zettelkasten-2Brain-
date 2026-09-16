@@ -33,7 +33,9 @@ describe('findMissingSourceRefs', () => {
       [
         {
           id: 'syntheses/ueberblick',
-          frontmatter: { sources: ['https://example.com/artikel', 'wiki/concepts/x.md', 42, ''] },
+          frontmatter: {
+            sources: ['https://example.com/artikel', 'example.com/blog/post', 'www.heise.de', 'wiki/concepts/x.md', 42, ''],
+          },
         },
         { id: 'concepts/ohne-quellen', frontmatter: {} },
       ],
@@ -41,5 +43,14 @@ describe('findMissingSourceRefs', () => {
     );
 
     expect(missing).toEqual([]);
+  });
+
+  it('prueft Dateinamen mit Endung weiterhin, auch wenn sie wie eine Domain aussehen', () => {
+    const missing = findMissingSourceRefs(
+      [{ id: 'concepts/x', frontmatter: { sources: ['bericht.pdf', 'protokoll.md'] } }],
+      ['protokoll.md'],
+    );
+
+    expect(missing).toEqual([{ file: 'concepts/x', source: 'bericht.pdf' }]);
   });
 });

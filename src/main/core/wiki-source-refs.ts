@@ -25,11 +25,16 @@ function sourceList(value: unknown): string[] {
   return [];
 }
 
-// Nur Verweise pruefen, die nach Rohdatei aussehen. URLs und Wiki-Pfade sind keine raw/-Dateien.
+// Nur Verweise pruefen, die nach Rohdatei aussehen. URLs (auch ohne Schema, z.B. aus der
+// Web-Anreicherung, die keine Rohdatei anlegt) und Wiki-Pfade sind keine raw/-Dateien.
 function isRawFileRef(value: string): boolean {
-  if (!value.trim()) return false;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
-  if (/^wiki\//i.test(value.trim())) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return false;
+  if (/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/|$)/i.test(trimmed) && !/\.(md|txt|pdf|docx?|pptx?|xlsx?|csv|json|html?)$/i.test(trimmed)) {
+    return false;
+  }
+  if (/^wiki\//i.test(trimmed)) return false;
   return true;
 }
 
