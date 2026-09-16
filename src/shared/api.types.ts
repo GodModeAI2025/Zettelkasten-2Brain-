@@ -125,6 +125,7 @@ export interface LintResult {
   stalePages: Array<{ file: string; status: string; age: number }>;
   supersededNotStale: string[];
   seedWithMultipleSources: string[];
+  missingSources: Array<{ file: string; source: string }>;
   missingTemporalFields: string[];
   unreviewedPages: string[];
   uncertainPages: string[];

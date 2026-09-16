@@ -14,6 +14,7 @@ interface LintResult {
   stalePages: Array<{ file: string; status: string; age: number }>;
   supersededNotStale: string[];
   seedWithMultipleSources: string[];
+  missingSources: Array<{ file: string; source: string }>;
   missingTemporalFields: string[];
   errors: number;
   warnings: number;
@@ -461,6 +462,18 @@ export function LintPage() {
             <LintSection title="Seed mit mehreren Quellen" type="warning" count={result.seedWithMultipleSources.length}>
               {result.seedWithMultipleSources.map((page, i) => (
                 <div key={i} className="lint-item">{page}</div>
+              ))}
+            </LintSection>
+          )}
+
+          {result.missingSources.length > 0 && (
+            <LintSection title="Quelle ohne Rohdatei" type="warning" count={result.missingSources.length}>
+              {result.missingSources.map((ref, i) => (
+                <div key={i} className="lint-item">
+                  <span className="lint-item-file">{ref.file}</span>
+                  <span className="lint-item-arrow">&rarr;</span>
+                  <span className="lint-item-target">{ref.source}</span>
+                </div>
               ))}
             </LintSection>
           )}

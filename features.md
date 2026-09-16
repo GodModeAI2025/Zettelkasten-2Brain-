@@ -89,6 +89,7 @@ Prueft die Integritaet des Wikis auf:
 - **Index-Luecken**: Seiten die im Inhaltsverzeichnis fehlen
 - **Veraltungsrisiken**: Seed-Seiten ueber 90 Tage alt, ersetzte Seiten ohne Stale-Markierung
 - **Fehlende Metadaten**: Seiten ohne Status- oder Vertrauensfeld
+- **Quelle ohne Rohdatei**: `sources:`-Eintraege, deren Datei nicht mehr in `raw/` liegt (z.B. nach Vergessen oder Loeschen) — die Aussage ist dann nicht mehr rueckverfolgbar
 
 Die automatische Reparatur arbeitet in drei Phasen:
 
